@@ -29,7 +29,7 @@
 %% Exports to auv_texture.
 -export([material_faces/1,get_textureset_info/1,remap_uv_tile/1]).
 %% Exports to wings_edge_cmd.
--export([slide_uv_fix/3]).
+-export([slide_uv_fix/3,slide_uv_fix_vertices/3]).
 
 
 init() -> true.
@@ -223,7 +223,9 @@ maybe_fix_uv_vertices(Vs, We0, GeomSt0) ->
     end.
 
 fix_uv_vertex_region(Vs, We) ->
-    Fs = gb_sets:from_ordset(wings_face:from_vs(Vs, We)),
+    Fs0 = gb_sets:from_ordset(wings_face:from_vs(Vs, We)),
+    VisFs = gb_sets:from_ordset(wings_we:visible(We)),
+    Fs = gb_sets:intersection(Fs0, VisFs),
     UVFs = gb_sets:from_ordset(wings_we:uv_mapped_faces(We)),
     case gb_sets:is_empty(Fs) of
 	true ->
@@ -1687,6 +1689,10 @@ slide_uv_fix(Dx, State, #st{selmode=edge,sel=Sel}=St) ->
     slide_uv_fix_1(Sel, Dx, State, St);
 slide_uv_fix(_, _, St) ->
     St.
+
+slide_uv_fix_vertices(Es, We0, GeomSt0) ->
+    SlidVs = wings_vertex:from_edges(Es, We0),
+    maybe_fix_uv_vertices(SlidVs, We0, GeomSt0).
 
 slide_uv_fix_1([{Id,Es}|Sel], Dx, State, St0=#st{shapes=Shs0}) ->
     case gb_trees:lookup(Id, Shs0) of
