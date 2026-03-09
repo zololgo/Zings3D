@@ -389,7 +389,10 @@ seg_map_charts_1([We0|Cs], Type, Id, N, Acc,Failed,Ss) ->
 	{error,Message} ->
 	    seg_map_charts_1(Cs,Type,Id+1,N,Acc,[We1|Failed],Ss#seg{err=Message});
 	Vs0 ->
-	    Vs = auv_placement:rotate_area(Vs0,We1),
+	    Vs = case Type of
+		     camera -> Vs0;
+		     _ -> auv_placement:rotate_area(Vs0, We1)
+		 end,
 	    We = We1#we{vp=array:from_orddict(sort(Vs))},
 	    seg_map_charts_1(Cs, Type, Id+1, N, [We|Acc], Failed, Ss)
     end;
