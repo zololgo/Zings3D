@@ -48,6 +48,15 @@ menu({face}, Menu) ->
 	false ->
 	    Menu ++ [separator,auv_menu()]
     end;
+menu({vertex}, Menu) ->
+    case wpc_snap_win:active() of
+	true ->
+	    Menu;
+	false ->
+	    Menu ++ [separator,
+		     {?__(534,"Fix UV"), {?MODULE,fix_uv},
+		      ?__(535,"Optimize UV stretch for faces around the selected vertices and allow those UV corners to move")}]
+    end;
 menu({window}, Menu) ->
     Menu ++ [separator,
 	     {?__(1,"UV Editor Window"),uv_editor_window,
@@ -128,6 +137,10 @@ auv_txset_naming_menu() ->
      {?__(3,"UV Tile Base-1"), {txset_naming,uv_base1}, "Mudbox standard - name_u1_v1"},
      {?__(4,"UDIM"), {txset_naming,uv_udim}, "Mari standard - name_1001"}].
 
+command({face,{?MODULE, fix_uv}}, _) ->
+    next;
+command({vertex,{?MODULE, fix_uv}}, St) ->
+    fix_uv(St);
 command({body,{?MODULE, Op}} , St) ->
     start_uvmap(Op, St);
 command({face,{?MODULE, Op}} , St) ->
@@ -170,6 +183,146 @@ start_uvmap_1([{Id,_}|T], Action, St) ->
     end,
     start_uvmap_1(T, Action, St);
 start_uvmap_1([], _, _) -> keep.
+
+fix_uv(#st{sel=[]}) ->
+    wings_u:error_msg(?__(532,"Nothing selected"));
+fix_uv(#st{selmode=vertex}=St0) ->
+    ok = check_fix_uv_vertex_selection(St0),
+    St = wings_sel:map(fun(Vs, We) ->
+			       fix_uv_vertices(Vs, We, St0)
+		       end, St0),
+    {save_state,St}.
+
+check_fix_uv_vertex_selection(St) ->
+    wings_sel:fold(
+      fun(Vs, We, ok) ->
+	      Fs = gb_sets:from_ordset(wings_face:from_vs(Vs, We)),
+	      UVFs = gb_sets:from_ordset(wings_we:uv_mapped_faces(We)),
+	      case gb_sets:is_empty(Fs) of
+		  true ->
+		      wings_u:error_msg(?__(536,"Selected vertices must belong to at least one face."));
+		  false ->
+		      case gb_sets:is_subset(Fs, UVFs) of
+			  true ->
+			      ok;
+			  false ->
+			      wings_u:error_msg(?__(537,"All faces around the selected vertices must already have UV coordinates."))
+		      end
+	      end
+      end, ok, St).
+
+fix_uv_vertices(Vs, We0, GeomSt0) ->
+    Fs = wings_face:from_vs(Vs, We0),
+    Mode = uv_edit_mode(Fs, We0),
+    AuvSt = make_temp_uv_state(We0#we.id, Mode, We0, GeomSt0),
+    Charts0 = gb_trees:values(AuvSt#st.shapes),
+    Charts = [fix_uv_vertex_chart(Chart, AuvSt, Vs) || Chart <- Charts0],
+    update_uvs(Charts, We0).
+
+fix_uv_vertex_chart(We, St, FreeGeomVs) ->
+    Vs3d = orig_pos(We, St),
+    FreeUvVs = geom2auv_vs(FreeGeomVs, We),
+    case aligned_local_unfold(We, Vs3d, FreeUvVs) of
+	{ok, NewWe} ->
+	    NewWe;
+	fallback ->
+	    ?SLOW(auv_mapping:stretch_opt(We, Vs3d, FreeUvVs))
+    end.
+
+aligned_local_unfold(We0, Vs3d, FreeUvVs) ->
+    try auv_mapping:map_chart(lsqcm, We0#we{vp=Vs3d}, none) of
+	{error,_} ->
+	    fallback;
+	Vs0 when is_list(Vs0) ->
+	    {ok, align_unfolded_chart(Vs0, We0, FreeUvVs)}
+    catch
+	_:_ ->
+	    fallback
+    end.
+
+align_unfolded_chart(Vs0, We0, FreeUvVs) ->
+    Src0 = keysort(1, [{V,{S,T}} || {V,{S,T,_}} <- Vs0]),
+    AllVs = [V || {V,_} <- Src0],
+    FreeSet = gb_sets:from_list(FreeUvVs),
+    AnchorVs0 = [V || V <- AllVs, not gb_sets:is_member(V, FreeSet)],
+    AnchorVs = case length(AnchorVs0) >= 2 of
+		   true -> AnchorVs0;
+		   false -> AllVs
+	       end,
+    {Aligned,_Err} = best_aligned_uvs(Src0, AnchorVs, We0),
+    We0#we{vp=array:from_orddict(Aligned)}.
+
+best_aligned_uvs(Src0, AnchorVs, We0) ->
+    {Aligned1,Err1} = fit_aligned_uvs(Src0, AnchorVs, We0),
+    {Aligned2,Err2} = fit_aligned_uvs(mirror_uvs_x(Src0), AnchorVs, We0),
+    case Err1 =< Err2 of
+	true -> {Aligned1,Err1};
+	false -> {Aligned2,Err2}
+    end.
+
+fit_aligned_uvs(Src0, AnchorVs, We0) ->
+    Src = gb_trees:from_orddict(Src0),
+    Pairs = [{gb_trees:get(V, Src), uv_coords(array:get(V, We0#we.vp))} || V <- AnchorVs],
+    {Transform,Err} = similarity_fit(Pairs),
+    {keysort(1, [{V,apply_similarity(Transform, UV)} || {V,UV} <- Src0]),Err}.
+
+mirror_uvs_x(Src0) ->
+    {Cx,_Cy} = centroid([UV || {_,UV} <- Src0]),
+    [{V,{2.0*Cx-X,Y}} || {V,{X,Y}} <- Src0].
+
+similarity_fit([{Src,Dst}]) ->
+    {{1.0,0.0,element(1, Dst)-element(1, Src),element(2, Dst)-element(2, Src)},0.0};
+similarity_fit(Pairs) ->
+    SrcPts = [Src || {Src,_} <- Pairs],
+    DstPts = [Dst || {_,Dst} <- Pairs],
+    {SCx,SCy} = centroid(SrcPts),
+    {DCx,DCy} = centroid(DstPts),
+    {A,B,Den} =
+	foldl(fun({{SX,SY},{DX,DY}}, {AccA,AccB,AccDen}) ->
+		      XS = SX-SCx,
+		      YS = SY-SCy,
+		      XD = DX-DCx,
+		      YD = DY-DCy,
+		      {AccA + XS*XD + YS*YD,
+		       AccB + XS*YD - YS*XD,
+		       AccDen + XS*XS + YS*YS}
+	      end, {0.0,0.0,0.0}, Pairs),
+    case Den > ?EPSILON of
+	true ->
+	    C = A/Den,
+	    D = B/Den,
+	    Tx = DCx - C*SCx + D*SCy,
+	    Ty = DCy - D*SCx - C*SCy,
+	    {{C,D,Tx,Ty}, similarity_error({C,D,Tx,Ty}, Pairs)};
+	false ->
+	    Tx = DCx - SCx,
+	    Ty = DCy - SCy,
+	    {{1.0,0.0,Tx,Ty}, similarity_error({1.0,0.0,Tx,Ty}, Pairs)}
+    end.
+
+similarity_error(Transform, Pairs) ->
+    foldl(fun({Src,Dst}, Acc) ->
+		  {X1,Y1,_} = apply_similarity(Transform, Src),
+		  {X2,Y2} = Dst,
+		  DX = X1 - X2,
+		  DY = Y1 - Y2,
+		  Acc + DX*DX + DY*DY
+	  end, 0.0, Pairs).
+
+apply_similarity({C,D,Tx,Ty}, {X,Y}) ->
+    {C*X - D*Y + Tx,
+     D*X + C*Y + Ty,
+     0.0}.
+
+uv_coords({X,Y,_}) ->
+    {X,Y}.
+
+centroid(Ps) ->
+    {SX,SY,N} =
+	foldl(fun({X,Y}, {AccX,AccY,AccN}) ->
+		      {AccX+X,AccY+Y,AccN+1}
+	      end, {0.0,0.0,0}, Ps),
+    {SX/N,SY/N}.
 
 segment_or_edit(edit, _Id, _St) -> {edit,object};
 segment_or_edit(segment,Id,#st{selmode=face,sel=Sel,shapes=Shs}) ->
@@ -2795,8 +2948,10 @@ geom2auv_faces(Fs, _) ->
 auv2geom_vs(Vs, #we{name=#ch{vmap=Vmap}}) ->
     sort([auv_segment:map_vertex(V, Vmap) || V <- Vs]).
 
-geom2auv_vs(Vs, #we{name=#ch{vmap=Vmap},vp=Vtab}) ->
-    geom2auv_vs_1(wings_util:array_keys(Vtab), gb_sets:from_list(Vs), Vmap, []).
+geom2auv_vs(Vs0, #we{name=#ch{vmap=Vmap},vp=Vtab}) when is_list(Vs0) ->
+    geom2auv_vs_1(wings_util:array_keys(Vtab), gb_sets:from_list(Vs0), Vmap, []);
+geom2auv_vs(Vs0, #we{name=#ch{vmap=Vmap},vp=Vtab}) ->
+    geom2auv_vs_1(wings_util:array_keys(Vtab), Vs0, Vmap, []).
 
 geom2auv_vs_1([V|Vs], VsSet, Vmap, Acc) ->
     case gb_sets:is_member(auv_segment:map_vertex(V, Vmap), VsSet) of

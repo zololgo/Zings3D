@@ -38,7 +38,7 @@
 
 -module(auv_mapping).
 
--export([stretch_opt/2, fs_area/2, area2d2/3,area3d/3, calc_area/3]).
+-export([stretch_opt/2, stretch_opt/3, fs_area/2, area2d2/3,area3d/3, calc_area/3]).
 -export([map_chart/3, projectFromChartNormal/2, chart_normal/2]).
 
 %% Internal exports. 
@@ -1018,12 +1018,16 @@ area3d(V1, V2, V3) ->
 -define(VERTEX_STEP, 0.001).
 
 stretch_opt(We0, OVs) ->
+    stretch_opt(We0, OVs, []).
+
+stretch_opt(We0, OVs, FreeVs0) ->
     Fs = wings_we:visible(We0),
     wings_pb:start(?__(1,"optimizing")),
     wings_pb:update(0.01, ?__(2,"initializing")),
 
     %% {FaceToStretchMean, FaceToStretchWorst,FaceToVerts,VertToFaces,VertToUvs}
-    {F2S2,_F2S8,Uvs,State,Scale} = stretch_setup(Fs,We0,OVs),
+    FreeVs = gb_sets:from_list(FreeVs0),
+    {F2S2,_F2S8,Uvs,State,Scale} = stretch_setup(Fs,We0,OVs,FreeVs),
 
     V2S = stretch_per_vertex(gb_trees:to_list(State#s.v2f),F2S2,State,gb_trees:empty()),
     S2V = lists:reverse(lists:keysort(2,gb_trees:to_list(V2S))),
@@ -1037,13 +1041,13 @@ stretch_opt(We0, OVs) ->
     Suvs = [{Id,{S0/Scale,T0/Scale,0.0}} || {Id,{S0,T0}} <- SUvs1],
     We0#we{vp=array:from_orddict(Suvs)}.
 
-stretch_setup(Fs, We0, OVs) ->
+stretch_setup(Fs, We0, OVs, FreeVs) ->
     Be = wings_face:outer_edges(Fs, We0),
     Bv0 = foldl(fun(Edge, Acc) ->
 			#edge{vs=Vs,ve=Ve} = array:get(Edge, We0#we.es),
 			[Vs,Ve|Acc]
 		end, [], Be),
-    Bv = gb_sets:from_list(Bv0),
+    Bv = gb_sets:subtract(gb_sets:from_list(Bv0), FreeVs),
     Tris0 = triangulate(Fs,We0),
     {S,F2A,F2OV} = calc_scale(Tris0, OVs, 0.0, 0.0, [], []),
     Tris = [{Face,[{Id1,{S1*S,T1*S}},{Id2,{S2*S,T2*S}},{Id3,{S3*S,T3*S}}]} ||
