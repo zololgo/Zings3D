@@ -45,8 +45,9 @@ menu(X, Y, St) ->
 	     	{?__(7,"Create a new edge by connecting midpoints of selected edges"),
 			 ?__(26,"Create multiple parallel edges by connecting selected edges"),
 		 	 ?__(25,"Create a new edge and slides it along neighbor edges")},[]},
-	    {?__(8,"Bevel"),bevel,
-	     ?__(9,"Round off selected edges")},
+	    {?__(8,"Bevel"),bevel_fun(),
+	     {?__(9,"Round off selected edges"),[],
+	      ?__(53,"Round off selected edges and fix UVs once the drag finishes")}},
 	    separator,
 	    {?__(10,"Dissolve"), dslv(),
 		{?__(11,"Eliminate selected edges"), [],
@@ -79,6 +80,12 @@ slide_fun() ->
     fun
 	(1, _Ns) -> {edge,slide};
 	(3, _Ns) -> {edge,slide_uv};
+	(_, _) -> ignore
+    end.
+bevel_fun() ->
+    fun
+	(1, _Ns) -> {edge,bevel};
+	(3, _Ns) -> {edge,bevel_uv};
 	(_, _) -> ignore
     end.
 dslv() ->
@@ -137,6 +144,9 @@ cut_ask_entry() ->
 %% Edge commands.
 command(bevel, St) ->
     ?SLOW(wings_extrude_edge:bevel(St));
+command(bevel_uv, St) ->
+    Flags = [{done,fun bevel_done/3}],
+    ?SLOW(wings_extrude_edge:bevel(St, Flags));
 command({extrude,Type}, St) ->
     ?SLOW(wings_extrude_edge:extrude(Type, St));
 command({flatten,Plane}, St) ->
@@ -485,6 +495,17 @@ maybe_fix_slide_uvs(Dx, State, St) ->
     case code:ensure_loaded(wpc_autouv) of
 	{module,wpc_autouv} ->
 	    wpc_autouv:slide_uv_fix(Dx, State, St);
+	_ ->
+	    St
+    end.
+
+bevel_done(_, _, St) ->
+    maybe_fix_bevel_uvs(St).
+
+maybe_fix_bevel_uvs(St) ->
+    case code:ensure_loaded(wpc_autouv) of
+	{module,wpc_autouv} ->
+	    wpc_autouv:bevel_uv_fix(St);
 	_ ->
 	    St
     end.

@@ -13,7 +13,7 @@
 %%
 
 -module(wings_extrude_edge).
--export([bump/1,bevel/1,bevel_faces/1,extrude/2,crease/1,extrude_edges/3]).
+-export([bump/1,bevel/1,bevel/2,bevel_faces/1,extrude/2,crease/1,extrude_edges/3]).
 
 -include("wings.hrl").
 -import(lists, [foldl/3,reverse/1]).
@@ -54,8 +54,11 @@ bump(Faces, Dist, We0) ->
 %%
 
 bevel(St0) ->
+    bevel(St0, []).
+
+bevel(St0, DragFlags) ->
     St = wings_sel:map_update_sel(fun bevel_edges/2, face, St0),
-    bevel_drag(St).
+    bevel_drag(St, DragFlags).
 
 bevel_edges(Edges, #we{mirror=MirrorFace}=We0) ->
     Dist = ?BEVEL_EXTRUDE_DIST_KLUDGE,
@@ -107,13 +110,16 @@ bevel_faces(Faces, #we{mirror=MirrorFace}=We0) ->
 %%
 
 bevel_drag(St) ->
+    bevel_drag(St, []).
+
+bevel_drag(St, DragFlags) ->
     MF = fun(_, #we{temp={Limit,_}}) -> Limit end,
     RF = fun min/2,
     Limit = wings_sel:dfold(MF, RF, infinite, St),
     DF = fun(_, #we{temp={_,Tv}}=We) ->
                  wings_drag:translate_fun(Tv, We)
          end,
-    wings_drag:fold(DF, [{distance,{0.0,Limit}}], [], St).
+    wings_drag:fold(DF, [{distance,{0.0,Limit}}], DragFlags, St).
 
 bevel_tv(Vs, We, Forbidden) ->
     foldl(fun(V, A) -> bevel_tv_1(V, We, Forbidden, A) end, [], Vs).
