@@ -196,28 +196,44 @@ fix_uv(#st{selmode=vertex}=St0) ->
 check_fix_uv_vertex_selection(St) ->
     wings_sel:fold(
       fun(Vs, We, ok) ->
-	      Fs = gb_sets:from_ordset(wings_face:from_vs(Vs, We)),
-	      UVFs = gb_sets:from_ordset(wings_we:uv_mapped_faces(We)),
-	      case gb_sets:is_empty(Fs) of
-		  true ->
+	      case fix_uv_vertex_region(Vs, We) of
+		  {ok,_Fs} ->
+		      ok;
+		  empty ->
 		      wings_u:error_msg(?__(536,"Selected vertices must belong to at least one face."));
-		  false ->
-		      case gb_sets:is_subset(Fs, UVFs) of
-			  true ->
-			      ok;
-			  false ->
-			      wings_u:error_msg(?__(537,"All faces around the selected vertices must already have UV coordinates."))
-		      end
+		  unmapped ->
+		      wings_u:error_msg(?__(537,"All faces around the selected vertices must already have UV coordinates."))
 	      end
       end, ok, St).
 
 fix_uv_vertices(Vs, We0, GeomSt0) ->
-    Fs = wings_face:from_vs(Vs, We0),
+    {ok,Fs} = fix_uv_vertex_region(Vs, We0),
     Mode = uv_edit_mode(Fs, We0),
     AuvSt = make_temp_uv_state(We0#we.id, Mode, We0, GeomSt0),
     Charts0 = gb_trees:values(AuvSt#st.shapes),
     Charts = [fix_uv_vertex_chart(Chart, AuvSt, Vs) || Chart <- Charts0],
     update_uvs(Charts, We0).
+
+maybe_fix_uv_vertices(Vs, We0, GeomSt0) ->
+    case fix_uv_vertex_region(Vs, We0) of
+	{ok,_Fs} ->
+	    fix_uv_vertices(Vs, We0, GeomSt0);
+	_ ->
+	    skip
+    end.
+
+fix_uv_vertex_region(Vs, We) ->
+    Fs = gb_sets:from_ordset(wings_face:from_vs(Vs, We)),
+    UVFs = gb_sets:from_ordset(wings_we:uv_mapped_faces(We)),
+    case gb_sets:is_empty(Fs) of
+	true ->
+	    empty;
+	false ->
+	    case gb_sets:is_subset(Fs, UVFs) of
+		true -> {ok,Fs};
+		false -> unmapped
+	    end
+    end.
 
 fix_uv_vertex_chart(We, St, FreeGeomVs) ->
     Vs3d = orig_pos(We, St),
@@ -1688,26 +1704,17 @@ slide_uv_fix_1([{Id,Es}|Sel], Dx, State, St0=#st{shapes=Shs0}) ->
 slide_uv_fix_1([], _, _, St) ->
     St.
 
-slide_uv_fix_object(Id, Es, Dx, State, We0, GeomSt0) ->
-    case wings_we:uv_mapped_faces(We0) of
-	[] ->
-	    skip;
-	UVFaces ->
-	    Mode = uv_edit_mode(UVFaces, We0),
-	    AuvSt0 = make_temp_uv_state(Id, Mode, We0, GeomSt0),
-	    GeomSelSt = wpa:sel_set(edge, [{Id,Es}], GeomSt0),
-	    {AuvSt1,_} = update_selection(GeomSelSt, AuvSt0),
-	    case AuvSt1#st.sel of
-		[] ->
-		    skip;
-		_ ->
-		    AuvSt = wings_edge_cmd:apply_slide(Dx, State, AuvSt1),
-		    update_uvs(gb_trees:values(AuvSt#st.shapes), We0)
-	    end
-    end.
+slide_uv_fix_object(_Id, Es, _Dx, _State, We0, GeomSt0) ->
+    SlidVs = wings_vertex:from_edges(Es, We0),
+    maybe_fix_uv_vertices(SlidVs, We0, GeomSt0).
 
-uv_edit_mode(UVFaces0, #we{fs=Ftab}) ->
+uv_edit_mode(UVFaces0, #we{fs=Ftab}) when is_list(UVFaces0) ->
     UVFaces = gb_sets:from_list(UVFaces0),
+    case gb_sets:size(UVFaces) == gb_trees:size(Ftab) of
+	true -> object;
+	false -> UVFaces
+    end;
+uv_edit_mode(UVFaces, #we{fs=Ftab}) ->
     case gb_sets:size(UVFaces) == gb_trees:size(Ftab) of
 	true -> object;
 	false -> UVFaces
