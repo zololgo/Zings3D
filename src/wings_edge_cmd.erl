@@ -15,7 +15,7 @@
 
 %% Commands.
 -export([menu/3,command/2]).
--export([hardness/2,set_color/2]).
+-export([hardness/2,set_color/2,apply_slide/3]).
 -export([loop_cut_partition/2]).
 
 -define(NEED_OPENGL, 1).
@@ -30,8 +30,9 @@ menu(X, Y, St) ->
     Menu = [{?__(2,"Move"),{move,Dir},[],[magnet]},
 	    wings_menu_util:rotate(St),
 	    wings_menu_util:scale(St),
-	    {?__(3,"Slide"), slide,
-	     ?__(4,"Slide edges along neighbor edges")},
+	    {?__(3,"Slide"), slide_fun(),
+	     {?__(4,"Slide edges along neighbor edges"),[],
+	      ?__(51,"Slide edges and fix UVs once the drag finishes")}},
 	    separator,
 	    {?__(5,"Extrude"),{extrude,Dir}},
 	    {?__(22,"Crease"),crease,
@@ -72,6 +73,12 @@ connect() ->
 	(1, _Ns) -> {edge,connect};
 	(2, _Ns) -> {edge,connect_multiple};
 	(3, _Ns) -> {edge,connect_slide};
+	(_, _) -> ignore
+    end.
+slide_fun() ->
+    fun
+	(1, _Ns) -> {edge,slide};
+	(3, _Ns) -> {edge,slide_uv};
 	(_, _) -> ignore
     end.
 dslv() ->
@@ -135,7 +142,9 @@ command({extrude,Type}, St) ->
 command({flatten,Plane}, St) ->
     flatten(Plane, St);
 command(slide, St) ->
-    slide(St);
+    slide(plain, St);
+command(slide_uv, St) ->
+    slide(uv_aware, St);
 command(cut_pick, St) ->
     cut_pick(St);
 command({cut,ask}, St) ->
@@ -233,7 +242,7 @@ connect_multiple_1(Es0, We) ->
 
 connect_slide(St0) ->
     St = wings_sel:map_update_sel(fun connect/2, St0),
-    slide(St).
+    slide(plain, St).
 
 cut_edges(Es, We) ->
     mapfoldl(fun(Edge, W0) ->
@@ -423,8 +432,8 @@ hardness(hard, St) ->
 %%% The Slide command.
 %%%
 
-slide(#st{sel=[]}=St) -> St;
-slide(St0) ->
+slide(_Type, #st{sel=[]}=St) -> St;
+slide(Type, St0) ->
     Mode = wings_pref:get_value(slide_mode, relative),
     Stop = wings_pref:get_value(slide_stop, false),
     State = {Mode,none,Stop},
@@ -450,9 +459,27 @@ slide(St0) ->
                    {Up,Dw,N,Bi,MUp,MDw}}
 	  end, {SUp, SDown, SN, SBi, unknown,unknown}, St0),
     Units = slide_units(State,MinUp,MinDw),
-    Flags = [{mode,{slide_mode(MinUp,MinDw),State}},{initial,[0]}],
+    Flags0 = [{mode,{slide_mode(MinUp,MinDw),State}},{initial,[0]}],
+    Flags = case Type of
+		uv_aware -> [{done,fun slide_done/3}|Flags0];
+		plain -> Flags0
+	    end,
     DF = fun(_, #we{temp=Tv}) -> Tv end,
     wings_drag:fold(DF, Units, Flags, St).
+
+slide_done(_, {absolute,_,_}, St) ->
+    wings_u:message(?__(52,"UV-aware Slide works only in relative (%) mode.")),
+    St;
+slide_done([Dx|_], {relative,_,_}=State, St) ->
+    maybe_fix_slide_uvs(Dx, State, St).
+
+maybe_fix_slide_uvs(Dx, State, St) ->
+    case code:ensure_loaded(wpc_autouv) of
+	{module,wpc_autouv} ->
+	    wpc_autouv:slide_uv_fix(Dx, State, St);
+	_ ->
+	    St
+    end.
 
 slide_mode(MinUp,MinDw) ->
     fun(help, State)		  ->	slide_help(State);
@@ -544,6 +571,29 @@ make_slide_fun(Vs, Slides, State) ->
        (_,_) ->
 	    make_slide_fun(Vs,Slides,State)
     end.
+
+apply_slide(Dx, State, St0) ->
+    SUp = SDown = SN = SBi = {0.0,0.0,0.0},
+    {St,_} =
+	wings_sel:mapfold(
+	  fun(EsSet, We, {Up0,Dw0,N0,Bi0}) ->
+		  LofEs0 = wings_edge_loop:partition_edges(EsSet, We),
+		  LofEs = reverse(sort([{length(Es),Es} || Es <- LofEs0])),
+		  {{Slides,_,_},Up,Dw,N,Bi} =
+		      slide_setup_edges(LofEs, Up0, Dw0, N0, Bi0, We,
+					{gb_trees:empty(),unknown,unknown}),
+		  {apply_slide_1(Dx, State, Slides, We),{Up,Dw,N,Bi}}
+	  end, {SUp, SDown, SN, SBi}, St0),
+    St.
+
+apply_slide_1(Dx, State, Slides, #we{vp=Vtab0}=We) ->
+    Vs = gb_trees:keys(Slides),
+    Fun = slide_fun(Dx, State, Slides),
+    Pos = foldl(Fun, [], Vs),
+    Vtab = foldl(fun({V,NewPos}, Acc) ->
+			 array:set(V, NewPos, Acc)
+		 end, Vtab0, Pos),
+    We#we{vp=Vtab}.
 
 slide_setup_edges([{_Sz,Es0}|LofEs],GUp0,GDw0,GN0,GBi0,We,Acc0) ->
     Parts = slide_part_loop(Es0,We),

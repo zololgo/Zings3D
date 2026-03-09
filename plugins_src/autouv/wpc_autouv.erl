@@ -28,6 +28,8 @@
 -export([init_show_maps/4]).
 %% Exports to auv_texture.
 -export([material_faces/1,get_textureset_info/1,remap_uv_tile/1]).
+%% Exports to wings_edge_cmd.
+-export([slide_uv_fix/3]).
 
 
 init() -> true.
@@ -1510,6 +1512,67 @@ do_drag({drag,Drag}) ->
 do_drag(Other) ->
     Other.
 
+slide_uv_fix(_Dx, {absolute,_,_}, St) ->
+    St;
+slide_uv_fix(Dx, State, #st{selmode=edge,sel=Sel}=St) ->
+    slide_uv_fix_1(Sel, Dx, State, St);
+slide_uv_fix(_, _, St) ->
+    St.
+
+slide_uv_fix_1([{Id,Es}|Sel], Dx, State, St0=#st{shapes=Shs0}) ->
+    case gb_trees:lookup(Id, Shs0) of
+	none ->
+	    slide_uv_fix_1(Sel, Dx, State, St0);
+	{value,We0} ->
+	    case slide_uv_fix_object(Id, Es, Dx, State, We0, St0) of
+		skip ->
+		    slide_uv_fix_1(Sel, Dx, State, St0);
+		We ->
+		    Shs = gb_trees:update(Id, We, Shs0),
+		    slide_uv_fix_1(Sel, Dx, State, St0#st{shapes=Shs})
+	    end
+    end;
+slide_uv_fix_1([], _, _, St) ->
+    St.
+
+slide_uv_fix_object(Id, Es, Dx, State, We0, GeomSt0) ->
+    case wings_we:uv_mapped_faces(We0) of
+	[] ->
+	    skip;
+	UVFaces ->
+	    Mode = uv_edit_mode(UVFaces, We0),
+	    AuvSt0 = make_temp_uv_state(Id, Mode, We0, GeomSt0),
+	    GeomSelSt = wpa:sel_set(edge, [{Id,Es}], GeomSt0),
+	    {AuvSt1,_} = update_selection(GeomSelSt, AuvSt0),
+	    case AuvSt1#st.sel of
+		[] ->
+		    skip;
+		_ ->
+		    AuvSt = wings_edge_cmd:apply_slide(Dx, State, AuvSt1),
+		    update_uvs(gb_trees:values(AuvSt#st.shapes), We0)
+	    end
+    end.
+
+uv_edit_mode(UVFaces0, #we{fs=Ftab}) ->
+    UVFaces = gb_sets:from_list(UVFaces0),
+    case gb_sets:size(UVFaces) == gb_trees:size(Ftab) of
+	true -> object;
+	false -> UVFaces
+    end.
+
+make_temp_uv_state(Id, Mode, We, #st{shapes=Shs0}=GeomSt0) ->
+    FakeGeomShs = gb_trees:update(Id, We#we{fs=undefined,es=array:new()}, Shs0),
+    FakeGeomSt = GeomSt0#st{sel=[],shapes=FakeGeomShs},
+    {Mode1,Charts} = build_charts(We, Mode, []),
+    Uvs = #uvstate{st=wpa:sel_set(face, [], FakeGeomSt),
+		   id=Id,
+		   mode=Mode1,
+		   bg_img=none,
+		   tile={0,0},
+		   matname=none},
+    FakeGeomSt#st{selmode=edge,sel=[],shapes=Charts,bb=Uvs,
+		  repeatable=ignore,ask_args=none,drag_args=none}.
+
 tighten(#st{selmode=vertex}=St) ->
     tighten_1(fun vertex_tighten/2, St);
 tighten(#st{selmode=body}=St) ->
@@ -2074,6 +2137,12 @@ new_geom_state_1(Shs, #st{bb=#uvstate{id=Id,st=#st{shapes=Orig}}}=AuvSt) ->
     end.
 
 rebuild_charts(We, St = #st{bb=UVS=#uvstate{st=Old,mode=Mode}}, ExtraCuts) ->
+    {Mode1,Charts} = build_charts(We, Mode, ExtraCuts),
+    wings_wm:set_prop(wireframed_objects,gb_sets:from_list(gb_trees:keys(Charts))),
+    St#st{sel=[],bb=UVS#uvstate{mode=Mode1,st=Old#st{sel=[]}},
+	  shapes=Charts}.
+
+build_charts(We, Mode, ExtraCuts) ->
     {Faces,FvUvMap} = auv_segment:fv_to_uv_map(Mode,We),
     {Charts0,Cuts0} = auv_segment:uv_to_charts(Faces, FvUvMap, We),
     {Charts1,Cuts} =
@@ -2085,9 +2154,7 @@ rebuild_charts(We, St = #st{bb=UVS=#uvstate{st=Old,mode=Mode}}, ExtraCuts) ->
 	end,
     Charts2 = auv_segment:cut_model(Charts1, Cuts, We),
     Charts = update_uv_tab(Charts2, FvUvMap),
-    wings_wm:set_prop(wireframed_objects,gb_sets:from_list(gb_trees:keys(Charts))),
-    St#st{sel=[],bb=UVS#uvstate{mode=update_mode(Faces,We),st=Old#st{sel=[]}},
-	  shapes=Charts}.
+    {update_mode(Faces,We),Charts}.
 
 update_mode(Faces0, #we{fs=Ftab}) ->
     Fs = gb_sets:from_list(Faces0),

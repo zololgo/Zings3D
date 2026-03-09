@@ -51,7 +51,8 @@
 	 info="",		% Information line.
 	 st :: #st{},           % Saved st record.
 	 last_move,		% Last move.
-         drag                   % Drag fun.
+         drag,                  % Drag fun.
+         done_fun=none          % Optional finalize callback.
 	}).
 
 
@@ -109,6 +110,7 @@
 -type flag() :: {'initial',list()}
               | 'keep_drag'
               | {'mode',{mode_fun(),mode_data()}}
+              | {'done',fun((list(), mode_data(), #st{}) -> #st{})}
               | {'rescale_normals',boolean()}
               | 'screen_relative'.
 
@@ -205,6 +207,7 @@ init(Units, Flags, St, DragFun) ->
     UnitSc = unit_scales(Units),
     Falloff = falloff(Units),
     {ModeFun,ModeData} = setup_mode(Flags, Falloff),
+    DoneFun = proplists:get_value(done, Flags, none),
     Warp = case wings_pref:get_value(no_warp, false) of
                false -> true;
                true -> wings_wm:win_size()
@@ -213,7 +216,7 @@ init(Units, Flags, St, DragFun) ->
           unit=Units,unit_sc=UnitSc,flags=Flags,offset=Offset,
           falloff=Falloff,
           mode_fun=ModeFun,mode_data=ModeData,
-          st=St,drag=DragFun}.
+          st=St,drag=DragFun,done_fun=DoneFun}.
 
 fold_1([{Id,Items}|T], F, Shapes) ->
     We0 = gb_trees:get(Id, Shapes),
@@ -1398,8 +1401,12 @@ trim([[_|_]=H|T]) ->
     end;
 trim(S) -> S.
 
-normalize(Move, #drag{mode_fun=ModeFun,mode_data=ModeData,
+normalize(Move, #drag{mode_fun=ModeFun,mode_data=ModeData0,done_fun=DoneFun,
             st=#st{shapes=Shs0,sel=Sel0}=St}) ->
+    ModeData = case ModeData0 of
+                   {changed,MD} -> MD;
+                   _ -> ModeData0
+               end,
     ModeFun(done, ModeData),
     gl:disable(gl_rescale_normal()),
     {Shs,Sel} = wings_dl:map(fun(D, Sh) ->
@@ -1408,7 +1415,11 @@ normalize(Move, #drag{mode_fun=ModeFun,mode_data=ModeData,
     if Sel=/=Sel0 -> wings_draw:refresh_dlists(St);
     true -> ignore
     end,
-    St#st{shapes=Shs,sel=Sel}.
+    St1 = St#st{shapes=Shs,sel=Sel},
+    case DoneFun of
+        none -> St1;
+        Fun -> Fun(Move, ModeData, St1)
+    end.
 
 normalize_fun(#dlo{drag=none}=D, _Move, ShsSel) -> {D,ShsSel};
 normalize_fun(#dlo{drag={matrix,_,_,_},transparent=#we{id=Id}=We,
