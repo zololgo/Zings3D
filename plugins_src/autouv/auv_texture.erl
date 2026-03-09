@@ -1487,22 +1487,20 @@ pass({auv_edges, [auv_edges,border_edges,Color,Width,UseMat]},_) ->
 	       Es = foldl(fun([A,B,_],Acc) -> [A,B|Acc] end, [], Es0),
 	       wings_gl:drawElements(?GL_LINES,length(Es),?GL_UNSIGNED_INT,Es)
        end,
-    fun(#ts{vbo={call,_,{vbo,Vbo}}, charts=Charts},_) ->
-	    gl:color3fv(Color),
-	    gl:lineWidth(float(Width)),
-            gl:bindBuffer(?GL_ARRAY_BUFFER, Vbo),
-            gl:vertexPointer(2, ?GL_FLOAT, 0, 0),
-	    gl:enableClientState(?GL_VERTEX_ARRAY),
+    fun(#ts{vbo={call,EnableVbo,{vbo,Vbo}}, charts=Charts},_) ->
 	    gl:disable(?GL_DEPTH_TEST),
+	    gl:lineWidth(float(Width)),
 	    case UseMat of
 		true ->
-		    gl:enableClientState(?GL_COLOR_ARRAY),
-		    foreach(R, Charts),
-		    gl:disableClientState(?GL_COLOR_ARRAY);
+		    EnableVbo(fun(_) -> foreach(R, Charts) end, #{});
 		_ ->
-		    foreach(R, Charts)
-	    end,
-	    gl:disableClientState(?GL_VERTEX_ARRAY)
+		    gl:color3fv(Color),
+		    gl:bindBuffer(?GL_ARRAY_BUFFER, Vbo),
+		    gl:vertexPointer(2, ?GL_FLOAT, 0, 0),
+		    gl:enableClientState(?GL_VERTEX_ARRAY),
+		    foreach(R, Charts),
+		    gl:disableClientState(?GL_VERTEX_ARRAY)
+	    end
     end;
 pass({auv_edges, _},Sh) ->
     pass({auv_edges, ?OPT_EDGES},Sh);
