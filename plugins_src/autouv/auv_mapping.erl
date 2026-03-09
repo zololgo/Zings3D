@@ -58,11 +58,13 @@
 map_chart(Type, We, Options) ->
     Faces = wings_we:visible(We),
     case catch auv_placement:group_edge_loops(Faces, We) of
+	[] when Type =:= camera; Type =:= project ->
+	    map_chart_1(Type, Faces, {0, []}, Options, We);
 	[] ->
 	    {error,?__(1,"A closed surface cannot be mapped. "
 	     "(Either divide it into into two or more charts, "
 	     "or cut it along some edges.)")};
-	[{_,[_,_]}] ->
+	[{_,[_,_]}] when Type =/= camera, Type =/= project ->
 	    {error,?__(2,"A cut in a closed surface must consist of at least two edges.")};
 	_ when Type == lsqcm, is_list(Options), length(Options) < 2 ->
 	    {error,?__(3,"At least 2 vertices (per chart) must be selected")};
