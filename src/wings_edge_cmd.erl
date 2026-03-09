@@ -465,14 +465,7 @@ slide(Type, St0) ->
 		  {{Slides,MUp,MDw},Up,Dw,N,Bi} =
 		      slide_setup_edges(LofEs,Up0,Dw0,N0,Bi0,We,
 					{gb_trees:empty(),MinUp,MinDw}),
-		  Tv0 = make_slide_tv(Slides, State),
-		  Tv = case Type of
-			   uv_aware ->
-			       UVFun = live_slide_uv_fun(EsSet, Slides, State, St0),
-			       {we,[UVFun],Tv0};
-			   plain ->
-			       Tv0
-		       end,
+		  Tv = make_slide_tv(Slides, State),
 		  {We#we{temp=Tv},
                    {Up,Dw,N,Bi,MUp,MDw}}
 	  end, {SUp, SDown, SN, SBi, unknown,unknown}, St0),
@@ -508,24 +501,6 @@ maybe_fix_bevel_uvs(St) ->
 	    wpc_autouv:bevel_uv_fix(St);
 	_ ->
 	    St
-    end.
-
-live_slide_uv_fun(EsSet, Slides, State, #st{shapes=Shs0}=GeomSt0) ->
-    fun(#we{id=Id}=We0, [Dx|_]) ->
-	    MovedWe = apply_slide_1(Dx, State, Slides, We0),
-	    case {State,code:ensure_loaded(wpc_autouv)} of
-		{{relative,_,_},{module,wpc_autouv}} ->
-		    Shs = gb_trees:update(Id, MovedWe, Shs0),
-		    GeomSt = GeomSt0#st{shapes=Shs},
-		    case wpc_autouv:slide_uv_fix_vertices(EsSet, MovedWe, GeomSt) of
-			skip -> MovedWe;
-			We -> We
-		    end;
-		_ ->
-		    MovedWe
-	    end;
-       (We, _) ->
-	    We
     end.
 
 slide_mode(MinUp,MinDw) ->
