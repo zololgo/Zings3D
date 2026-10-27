@@ -146,6 +146,8 @@ exec_op(#{<<"op">> := <<"state">>} = _Op, St) ->
 exec_op(#{<<"op">> := <<"dump_mesh">>} = Op, St) ->
     ObjId = maps:get(<<"object">>, Op, default_object_id(St)),
     {St, dump_mesh(St, ObjId)};
+exec_op(#{<<"op">> := <<"mesh_report">>} = Op, St) ->
+    {St, mesh_report(Op, St)};
 exec_op(#{<<"op">> := <<"new">>} = _Op, St) ->
     St1 = apply_file_new(St),
     {St1, scene_state(St1)};
@@ -911,6 +913,396 @@ we_bbox(#we{vp=Vtab}) ->
                                  min(MiZ,Z), max(MaZ,Z)}
                         end, {1.0e300,-1.0e300,1.0e300,-1.0e300,1.0e300,-1.0e300}, Vs)
     end.
+
+
+%%%
+%%% mesh_report — topology / geometry / UV health from #we{}
+%%%
+
+mesh_report(Op, #st{shapes=Shs}=St) ->
+    NgonMax = int_param(Op, <<"ngon_max">>, 4),
+    Eps = float_param(Op, <<"epsilon">>, 1.0e-5),
+    PlanRel = float_param(Op, <<"planarity_rel">>, 0.01),
+    Ids = mesh_report_ids(Op, St),
+    {Reports, Errors} =
+        lists:foldl(
+          fun(Id, {Acc, ErrAcc}) ->
+                  case gb_trees:lookup(Id, Shs) of
+                      none ->
+                          {Acc, [#{<<"id">> => Id,
+                                   <<"error">> => <<"object not found">>}|ErrAcc]};
+                      {value, We} ->
+                          try
+                              {[mesh_report_we(Id, We, NgonMax, Eps, PlanRel)|Acc], ErrAcc}
+                          catch
+                              C:R:Stack ->
+                                  io:format("mesh_report obj ~p ~p:~p~n~p~n",
+                                            [Id, C, R, Stack]),
+                                  {Acc, [#{<<"id">> => Id,
+                                           <<"error">> => format_exception(C, R)}|ErrAcc]}
+                          end
+                  end
+          end, {[], []}, Ids),
+    #{<<"objects">> => lists:reverse(Reports),
+      <<"errors">> => lists:reverse(Errors),
+      <<"num_objects">> => length(Reports),
+      <<"params">> => #{<<"ngon_max">> => NgonMax,
+                        <<"epsilon">> => Eps,
+                        <<"planarity_rel">> => PlanRel}}.
+
+mesh_report_ids(Op, #st{shapes=Shs}) ->
+    case maps:get(<<"objects">>, Op, undefined) of
+        undefined ->
+            case maps:get(<<"object">>, Op, undefined) of
+                undefined -> [Id || {Id, _} <- gb_trees:to_list(Shs)];
+                Id when is_integer(Id) -> [Id];
+                Id when is_float(Id) -> [trunc(Id)]
+            end;
+        List when is_list(List) ->
+            [case I of
+                 N when is_integer(N) -> N;
+                 N when is_float(N) -> trunc(N)
+             end || I <- List]
+    end.
+
+mesh_report_we(Id, We0, NgonMax, Eps, PlanRel) ->
+    We = case We0#we.fs of
+             undefined -> wings_we:rebuild(We0);
+             _ -> We0
+         end,
+    VCount = vertex_count(We),
+    ECount = length(array:sparse_to_orddict(We#we.es)),
+    FCount = gb_trees:size(We#we.fs),
+    {MiX,MaX,MiY,MaY,MiZ,MaZ} = we_bbox(We),
+    SizeX = MaX - MiX, SizeY = MaY - MiY, SizeZ = MaZ - MiZ,
+    Cx = (MiX + MaX) * 0.5, Cy = (MiY + MaY) * 0.5, Cz = (MiZ + MaZ) * 0.5,
+    Area = safe_surface_area(We),
+    Closed = not wings_we:is_open(We) andalso We#we.holes =:= [],
+    Volume = case Closed of
+                 true -> safe_volume(We);
+                 false -> null
+             end,
+    Topo = topology_health(We, NgonMax, Eps),
+    Geom = geometry_health(We, Closed, {Cx, Cy, Cz}, PlanRel),
+    UV = uv_health(We),
+    #{<<"id">> => Id,
+      <<"name">> => obj_name(We),
+      <<"vertices">> => VCount,
+      <<"edges">> => ECount,
+      <<"faces">> => FCount,
+      <<"bbox">> => #{<<"min">> => [MiX, MiY, MiZ],
+                      <<"max">> => [MaX, MaY, MaZ],
+                      <<"size">> => [SizeX, SizeY, SizeZ],
+                      <<"center">> => [Cx, Cy, Cz]},
+      <<"surface_area">> => Area,
+      <<"volume">> => Volume,
+      <<"closed">> => Closed,
+      <<"topology">> => Topo,
+      <<"geometry">> => Geom,
+      <<"uv">> => UV}.
+
+safe_surface_area(We) ->
+    try float_val(wings_we:surface_area(We))
+    catch _:_ -> 0.0
+    end.
+
+safe_volume(We) ->
+    try abs(float_val(wings_we:volume(We)))
+    catch _:_ -> 0.0
+    end.
+
+topology_health(#we{es=Etab, fs=Ftab, vp=Vtab, vc=Vct, holes=Holes}=We,
+                NgonMax, Eps) ->
+    HoleSet = gb_sets:from_list(Holes),
+    {OpenE, NonMan} =
+        lists:foldl(
+          fun({_Ei, #edge{lf=Lf, rf=Rf}}, {OE, NM}) ->
+                  VisL = face_visible(Lf, HoleSet),
+                  VisR = face_visible(Rf, HoleSet),
+                  case {VisL, VisR} of
+                      {true, true} when Lf =:= Rf -> {OE, NM + 1};
+                      {true, true} -> {OE, NM};
+                      {false, false} -> {OE, NM};
+                      _ -> {OE + 1, NM}
+                  end
+          end, {0, 0}, array:sparse_to_orddict(Etab)),
+    Faces = gb_trees:keys(Ftab),
+    {Degens, Ngons} =
+        lists:foldl(
+          fun(Face, {D, N}) when Face < 0 -> {D, N};
+             (Face, {D, N}) ->
+                  case gb_sets:is_member(Face, HoleSet) of
+                      true -> {D, N};
+                      false ->
+                          Vs = wings_face:vertices_ccw(Face, We),
+                          Sides = length(Vs),
+                          Area = abs(safe_face_area(Face, We)),
+                          D1 = case Area =< Eps of true -> D + 1; false -> D end,
+                          N1 = case Sides > NgonMax of true -> N + 1; false -> N end,
+                          {D1, N1}
+                  end
+          end, {0, 0}, Faces),
+    Isolated = count_isolated_vertices(Vct, Vtab),
+    Coincident = count_coincident_vertices(Vtab, Eps),
+    #{<<"open_edges">> => OpenE,
+      <<"boundary_edges">> => OpenE,
+      <<"non_manifold_edges">> => NonMan,
+      <<"degenerate_faces">> => Degens,
+      <<"ngons">> => Ngons,
+      <<"ngon_max">> => NgonMax,
+      <<"isolated_vertices">> => Isolated,
+      <<"coincident_vertices">> => Coincident,
+      <<"holes">> => length(Holes)}.
+
+face_visible(Face, _HoleSet) when Face < 0 -> false;
+face_visible(Face, HoleSet) -> not gb_sets:is_member(Face, HoleSet).
+
+safe_face_area(Face, We) ->
+    try wings_face:area(Face, We)
+    catch _:_ -> 0.0
+    end.
+
+count_isolated_vertices(undefined, _Vtab) ->
+    %% No connectivity; treat all as potentially connected via positions only.
+    0;
+count_isolated_vertices(Vct, Vtab) ->
+    lists:foldl(
+      fun({V, _Pos}, Acc) ->
+              case array:get(V, Vct) of
+                  undefined -> Acc + 1;
+                  none -> Acc + 1;
+                  Edge when is_integer(Edge), Edge >= 0 -> Acc;
+                  _ -> Acc + 1
+              end
+      end, 0, array:sparse_to_orddict(Vtab)).
+
+count_coincident_vertices(Vtab, Eps) ->
+    Pts = [P || {_V, P} <- array:sparse_to_orddict(Vtab)],
+    count_coincident_1(Pts, Eps, 0).
+
+count_coincident_1([], _Eps, Acc) -> Acc;
+count_coincident_1([P|Rest], Eps, Acc) ->
+    N = length([1 || Q <- Rest, e3d_vec:dist(P, Q) =< Eps]),
+    count_coincident_1(Rest, Eps, Acc + N).
+
+geometry_health(We, Closed, Centroid, PlanRel) ->
+    HoleSet = gb_sets:from_list(We#we.holes),
+    Faces = [F || F <- gb_trees:keys(We#we.fs),
+                  F >= 0,
+                  not gb_sets:is_member(F, HoleSet)],
+    {NonPlanar, MaxDev, Inverted} =
+        lists:foldl(
+          fun(Face, {NP, MD, Inv}) ->
+                  {_Dev, Rel} = face_planarity_dev(Face, We),
+                  NP1 = case Rel > PlanRel of true -> NP + 1; false -> NP end,
+                  MD1 = max(MD, Rel),
+                  Inv1 = case Closed andalso face_points_inward(Face, We, Centroid) of
+                             true -> Inv + 1;
+                             false -> Inv
+                         end,
+                  {NP1, MD1, Inv1}
+          end, {0, 0.0, 0}, Faces),
+    WindBad = count_winding_inconsistencies(We, HoleSet),
+    #{<<"non_planar_faces">> => NonPlanar,
+      <<"max_planarity_deviation">> => MaxDev,
+      <<"inverted_normals">> => Inverted,
+      <<"winding_inconsistencies">> => WindBad}.
+
+face_planarity_dev(Face, We) ->
+    VsPos = wings_face:vertex_positions(Face, We),
+    case VsPos of
+        [] -> {0.0, 0.0};
+        [_] -> {0.0, 0.0};
+        [_, _] -> {0.0, 0.0};
+        Pos ->
+            Norm = e3d_vec:normal(Pos),
+            case e3d_vec:is_zero(Norm) of
+                true -> {0.0, 0.0};
+                false ->
+                    N = e3d_vec:norm(Norm),
+                    C = e3d_vec:average(Pos),
+                    D0 = e3d_vec:dot(N, C),
+                    Dev = lists:foldl(
+                            fun(P, Acc) ->
+                                    max(Acc, abs(e3d_vec:dot(N, P) - D0))
+                            end, 0.0, Pos),
+                    %% Face size = max pairwise distance (cheap diameter proxy).
+                    Size = face_size_proxy(Pos),
+                    Rel = case Size > 1.0e-12 of
+                              true -> Dev / Size;
+                              false -> 0.0
+                          end,
+                    {Dev, Rel}
+            end
+    end.
+
+face_size_proxy([P|Ps]) ->
+    lists:foldl(fun(Q, Acc) -> max(Acc, e3d_vec:dist(P, Q)) end, 0.0, Ps).
+
+face_points_inward(Face, We, Centroid) ->
+    try
+        Norm = wings_face:normal(Face, We),
+        Center = wings_face:center(Face, We),
+        Out = e3d_vec:sub(Center, Centroid),
+        case e3d_vec:is_zero(Out) orelse e3d_vec:is_zero(Norm) of
+            true -> false;
+            false -> e3d_vec:dot(e3d_vec:norm(Norm), e3d_vec:norm(Out)) < -0.05
+        end
+    catch
+        _:_ -> false
+    end.
+
+count_winding_inconsistencies(#we{es=Etab}=We, HoleSet) ->
+    lists:foldl(
+      fun({_Ei, #edge{vs=Vs, ve=Ve, lf=Lf, rf=Rf}}, Acc) ->
+              VisL = face_visible(Lf, HoleSet),
+              VisR = face_visible(Rf, HoleSet),
+              case {VisL, VisR} of
+                  {true, true} ->
+                      %% On left face edge should be Vs->Ve; on right Ve->Vs.
+                      %% Wings stores that by construction; verify walk order.
+                      case edge_walk_ok(Lf, Vs, Ve, We) andalso
+                           edge_walk_ok(Rf, Ve, Vs, We) of
+                          true -> Acc;
+                          false -> Acc + 1
+                      end;
+                  _ -> Acc
+              end
+      end, 0, array:sparse_to_orddict(Etab)).
+
+edge_walk_ok(Face, From, To, We) ->
+    Vs = wings_face:vertices_ccw(Face, We),
+    case Vs of
+        [] -> false;
+        _ ->
+            Ring = Vs ++ [hd(Vs)],
+            edge_in_ring(Ring, From, To)
+    end.
+
+edge_in_ring([A, B|_], From, To) when A =:= From, B =:= To -> true;
+edge_in_ring([_|Rest], From, To) -> edge_in_ring(Rest, From, To);
+edge_in_ring([], _, _) -> false.
+
+uv_health(We) ->
+    HoleSet = gb_sets:from_list(We#we.holes),
+    Faces = [F || F <- gb_trees:keys(We#we.fs),
+                  F >= 0,
+                  not gb_sets:is_member(F, HoleSet)],
+    case wings_va:any_uvs(We) of
+        false ->
+            #{<<"has_uvs">> => false,
+              <<"faces_without_uvs">> => length(Faces),
+              <<"uvs_outside_01">> => 0,
+              <<"islands">> => []};
+        true ->
+            FaceUVs = [{F, face_uvs(F, We)} || F <- Faces],
+            Without = length([1 || {_F, UVs} <- FaceUVs, UVs =:= []]),
+            AllUVs = lists:append([UVs || {_F, UVs} <- FaceUVs]),
+            Outside = length([1 || {U, V} <- AllUVs,
+                                   U < 0.0 orelse U > 1.0 orelse
+                                   V < 0.0 orelse V > 1.0]),
+            Islands = uv_islands(FaceUVs, We),
+            #{<<"has_uvs">> => true,
+              <<"faces_without_uvs">> => Without,
+              <<"uvs_outside_01">> => Outside,
+              <<"uv_count">> => length(AllUVs),
+              <<"uv_bounds">> => encode_uv_bounds(uv_bbox(AllUVs)),
+              <<"islands">> => Islands}
+    end.
+
+face_uvs(Face, We) ->
+    wings_face:fold(
+      fun(_V, Edge, _E, Acc) ->
+              case wings_va:attr(uv, wings_va:edge_attrs(Edge, Face, We)) of
+                  {U, V} when is_float(U), is_float(V) -> [{U, V}|Acc];
+                  _ -> Acc
+              end
+      end, [], Face, We).
+
+uv_islands(FaceUVs, We) ->
+    %% Connected components over faces that share an edge and both have UVs.
+    WithUV = [F || {F, UVs} <- FaceUVs, UVs =/= []],
+    UVMap = maps:from_list(FaceUVs),
+    Adj = build_face_adj(WithUV, We),
+    Comps = connected_components(WithUV, Adj),
+    [begin
+         UVs = lists:append([maps:get(F, UVMap, []) || F <- Comp]),
+         {MiU, MaU, MiV, MaV} = uv_bbox(UVs),
+         Outside = lists:any(fun({U, V}) ->
+                                     U < 0.0 orelse U > 1.0 orelse
+                                         V < 0.0 orelse V > 1.0
+                             end, UVs),
+         #{<<"faces">> => length(Comp),
+           <<"face_ids">> => lists:sublist(lists:sort(Comp), 32),
+           <<"bbox">> => encode_uv_bounds({MiU, MaU, MiV, MaV}),
+           <<"outside_01">> => Outside}
+     end || Comp <- Comps].
+
+build_face_adj(Faces, #we{es=Etab}=We) ->
+    %% Link faces only when they share an edge *and* UV corners match
+    %% (so distinct UV projections become separate islands).
+    FaceSet = gb_sets:from_list(Faces),
+    lists:foldl(
+      fun({Ei, #edge{vs=Vs, ve=Ve, lf=Lf, rf=Rf}}, Acc) ->
+              case gb_sets:is_member(Lf, FaceSet) andalso
+                   gb_sets:is_member(Rf, FaceSet) andalso
+                   uv_edge_continuous(Ei, Vs, Ve, Lf, Rf, We) of
+                  true ->
+                      Acc1 = maps:update_with(Lf, fun(L) -> [Rf|L] end, [Rf], Acc),
+                      maps:update_with(Rf, fun(L) -> [Lf|L] end, [Lf], Acc1);
+                  false -> Acc
+              end
+      end, #{}, array:sparse_to_orddict(Etab)).
+
+uv_edge_continuous(_Edge, Vs, Ve, Lf, Rf, We) ->
+    %% Each (V,Face) UV lives on the face-walk edge that yields that V —
+    %% not on the shared geometric edge for both endpoints.
+    case {vtx_face_uv(Vs, Lf, We), vtx_face_uv(Ve, Lf, We),
+          vtx_face_uv(Vs, Rf, We), vtx_face_uv(Ve, Rf, We)} of
+        {{U1, V1}, {U2, V2}, {U3, V3}, {U4, V4}} ->
+            uv_close({U1, V1}, {U3, V3}) andalso uv_close({U2, V2}, {U4, V4});
+        _ ->
+            false
+    end.
+
+vtx_face_uv(V, Face, We) ->
+    wings_face:fold(
+      fun(Vx, Edge, _Rec, Acc) ->
+              case Vx =:= V of
+                  true ->
+                      case wings_va:attr(uv, wings_va:edge_attrs(Edge, Face, We)) of
+                          {U, VV} when is_float(U), is_float(VV) -> {U, VV};
+                          _ -> Acc
+                      end;
+                  false -> Acc
+              end
+      end, undefined, Face, We).
+
+uv_close({A, B}, {C, D}) ->
+    abs(A - C) =< 1.0e-4 andalso abs(B - D) =< 1.0e-4;
+uv_close(_, _) -> false.
+
+connected_components(Nodes, Adj) ->
+    connected_components(Nodes, Adj, gb_sets:empty(), []).
+
+connected_components([], _Adj, _Seen, Acc) -> Acc;
+connected_components([N|Ns], Adj, Seen, Acc) ->
+    case gb_sets:is_member(N, Seen) of
+        true -> connected_components(Ns, Adj, Seen, Acc);
+        false ->
+            {Comp, Seen1} = cc_dfs([N], Adj, Seen, []),
+            connected_components(Ns, Adj, Seen1, [Comp|Acc])
+    end.
+
+cc_dfs([], _Adj, Seen, Comp) -> {Comp, Seen};
+cc_dfs([N|Stack], Adj, Seen, Comp) ->
+    case gb_sets:is_member(N, Seen) of
+        true -> cc_dfs(Stack, Adj, Seen, Comp);
+        false ->
+            Neigh = maps:get(N, Adj, []),
+            cc_dfs(Neigh ++ Stack, Adj, gb_sets:add_element(N, Seen), [N|Comp])
+    end.
+
 
 dump_mesh(St, ObjId) ->
     case gb_trees:lookup(ObjId, St#st.shapes) of

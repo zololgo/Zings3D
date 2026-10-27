@@ -64,6 +64,7 @@ Some ops merge extra fields into the success payload (e.g. `uv_project` returns 
 | `uv_project` | see [UV](#uv) | Built-in **planar** projection of selected faces |
 | `uv_transform` | see [UV](#uv) | Scale/offset or `rect` remap of existing UVs |
 | `uv_dump` | — | UV stats per object and current selection |
+| `mesh_report` | optional `objects` / `object`, `ngon_max`, `epsilon`, `planarity_rel` | Topology / geometry / UV health from `#we{}` |
 | `export` | `format`, `path`, optional `include_uvs` (default **true** for OBJ) | Silent export |
 
 ## Primitives
@@ -232,6 +233,46 @@ Adjust existing per-corner UVs (run `uv_project` first if needed).
 ```
 
 Returns per-object `uv_count`, `uv_bounds`, `has_uvs`, plus selection UV summary.
+
+
+### `mesh_report`
+
+Computes a per-object mesh health report **inside Wings** from `#we{}` data (no export round-trip).
+
+```json
+{"op":"mesh_report"}
+```
+
+```json
+{"op":"mesh_report","objects":[1,2],"ngon_max":4,"epsilon":1e-5,"planarity_rel":0.01}
+```
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `objects` | all | List of object ids |
+| `object` | — | Single id (ignored if `objects` set) |
+| `ngon_max` | `4` | Faces with more sides counted as n-gons |
+| `epsilon` | `1e-5` | Degenerate-area / coincident-vertex tolerance |
+| `planarity_rel` | `0.01` | Non-planar if max plane deviation / face size exceeds this |
+
+Per object the response includes:
+
+- Counts: `vertices`, `edges`, `faces`
+- `bbox`: `min` / `max` / `size` / `center`
+- `surface_area`, `volume` (only when `closed`), `closed`
+- `topology`: `open_edges` / `boundary_edges`, `non_manifold_edges`, `degenerate_faces`, `ngons`, `isolated_vertices`, `coincident_vertices`, `holes`
+- `geometry`: `non_planar_faces`, `max_planarity_deviation`, `inverted_normals`, `winding_inconsistencies`
+- `uv`: `has_uvs`, `faces_without_uvs`, `uvs_outside_01`, `uv_bounds`, `islands` (connected face components with UV bbox)
+
+Errors are collected **per object** in `errors` (one bad object does not fail the whole op).
+
+Python helper: `tools/wings_agent_client.py` → `op_mesh_report`.  
+Analyzer (palette / shape-spec checks + summary): `tools/mesh_report.py`.
+
+```bash
+python3 tools/mesh_report.py --dump-wings --spec /path/to/spec.json \
+  --json-out /tmp/mesh_report.json --text-out /tmp/mesh_report.txt
+```
 
 ### Export with UVs
 

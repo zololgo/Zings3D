@@ -42,6 +42,14 @@ def op_uv_dump() -> dict[str, Any]:
     return _op("uv_dump")
 
 
+def op_mesh_report(objects: list[int] | None = None, **fields: Any) -> dict[str, Any]:
+    """Request mesh topology/geometry/UV health report (see docs/wings-agent-protocol.md)."""
+    payload = _op("mesh_report", **fields)
+    if objects is not None:
+        payload["objects"] = objects
+    return payload
+
+
 def op_mat_info() -> dict[str, Any]:
     return _op("mat_info")
 
