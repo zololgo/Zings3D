@@ -303,9 +303,65 @@
     }
   },
   {
-    "step": "edge ring cut (C hotkey)",
+    "step": "select ring (G)",
     "request": {
-      "op": "edge_ring_cut"
+      "op": "select_ring"
+    },
+    "response": {
+      "num_objects": 1,
+      "objects": [
+        {
+          "bbox": [
+            -1.0,
+            1.0,
+            0.0,
+            2.5,
+            -1.0,
+            1.0
+          ],
+          "edges": 36,
+          "faces": 14,
+          "id": 1,
+          "name": "Cube1",
+          "vertices": 16
+        }
+      ],
+      "ok": true,
+      "op": "select_ring",
+      "selection": [
+        {
+          "ids": [
+            0,
+            2,
+            4,
+            5,
+            6,
+            7,
+            8,
+            11,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            32,
+            34
+          ],
+          "object": 1
+        }
+      ],
+      "selection_mode": "edge"
+    }
+  },
+  {
+    "step": "connect (C hotkey)",
+    "request": {
+      "op": "connect"
     },
     "response": {
       "num_objects": 1,
@@ -327,7 +383,7 @@
         }
       ],
       "ok": true,
-      "op": "edge_ring_cut",
+      "op": "connect",
       "selection": [
         {
           "ids": [
@@ -998,9 +1054,9 @@
     }
   },
   {
-    "step": "house/select edge ring",
+    "step": "house/select ring",
     "request": {
-      "op": "select_edge_ring"
+      "op": "select_ring"
     },
     "response": {
       "num_objects": 1,
@@ -1022,7 +1078,7 @@
         }
       ],
       "ok": true,
-      "op": "select_edge_ring",
+      "op": "select_ring",
       "selection": [
         {
           "ids": [
@@ -1048,9 +1104,9 @@
     }
   },
   {
-    "step": "house/cut (C connect)",
+    "step": "house/connect loop",
     "request": {
-      "op": "cut"
+      "op": "connect"
     },
     "response": {
       "num_objects": 1,
@@ -1072,7 +1128,7 @@
         }
       ],
       "ok": true,
-      "op": "cut",
+      "op": "connect",
       "selection": [
         {
           "ids": [
@@ -1102,7 +1158,7 @@
     }
   },
   {
-    "step": "house/state_after_cut",
+    "step": "house/state_after_connect",
     "request": {
       "op": "state"
     },
