@@ -183,11 +183,17 @@ exec_op(#{<<"op">> := <<"cut">>} = Op, St) ->
 exec_op(#{<<"op">> := <<"connect">>} = Op, St) ->
     St1 = op_connect(Op, St),
     {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"select_ring">>} = _Op, St) ->
+    St1 = op_select_ring(St),
+    {St1, scene_state(St1)};
 exec_op(#{<<"op">> := <<"select_edge_ring">>} = _Op, St) ->
-    St1 = apply_select_command({edge_loop, edge_ring}, St),
+    St1 = op_select_ring(St),
     {St1, scene_state(St1)};
 exec_op(#{<<"op">> := <<"edge_ring_cut">>} = Op, St) ->
-    St1 = op_edge_ring_cut(Op, St),
+    St1 = op_edge_ring_connect(Op, St),
+    {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"edge_ring_connect">>} = Op, St) ->
+    St1 = op_edge_ring_connect(Op, St),
     {St1, scene_state(St1)};
 exec_op(#{<<"op">> := <<"inset">>} = Op, St) ->
     St1 = op_inset(Op, St),
@@ -316,34 +322,23 @@ op_inset(Op, St) ->
             throw({agent_error, io_lib:format("inset failed: ~p", [Other])})
     end.
 
-%% Default `cut` matches the C hotkey in wings_hotkey.erl:
-%%   {edge,$c,{edge,connect}}  and  {vertex,$c,{vertex,connect}}
-%% (split selected edges at midpoints and connect — one object).
-%% Optional `segments` (N>=2) uses menu/hotkey {edge,{cut,N}} — vertices only.
+%% Split selected edges into N parts ({edge,{cut,N}}); hotkeys 2–0 in wings_hotkey.erl.
 op_cut(Op, St) ->
-    case maps:get(<<"segments">>, Op, undefined) of
-        undefined ->
-            hotkey_cut(St);
-        Seg ->
-            N = int_val(Seg),
-            case N < 2 of
-                true -> throw({agent_error, <<"segments must be at least 2">>});
-                false ->
-                    require_mode(edge, St),
-                    apply_edge_command({cut, N}, St)
-            end
+    N = case maps:get(<<"segments">>, Op, 2) of
+            Seg -> int_val(Seg)
+        end,
+    case N < 2 of
+        true -> throw({agent_error, <<"segments must be at least 2">>});
+        false ->
+            require_mode(edge, St),
+            apply_edge_command({cut, N}, St)
     end.
 
-hotkey_cut(#st{selmode=edge}=St) ->
-    apply_edge_command(connect, St);
-hotkey_cut(#st{selmode=vertex}=St) ->
-    apply_vertex_command(connect, St);
-hotkey_cut(#st{selmode=Mode}) ->
-    throw({agent_error,
-           agent_fmt("cut requires edge or vertex mode (C hotkey), not ~w", [Mode])}).
-
+%% C hotkey: {edge,$c,{edge,connect}} / {vertex,$c,{vertex,connect}} — Connect, not Cut.
 op_connect(Op, St) ->
-    case parse_connect_variant(maps:get(<<"variant">>, Op, <<"edge">>)) of
+    case parse_connect_variant(maps:get(<<"variant">>, Op, default)) of
+        default ->
+            connect_hotkey(St);
         edge ->
             require_mode(edge, St),
             apply_edge_command(connect, St);
@@ -370,16 +365,24 @@ op_connect(Op, St) ->
                    <<"connect_slide requires interactive slide; use variant edge instead">>})
     end.
 
-op_edge_ring_cut(Op, St) ->
+op_select_ring(St) ->
+    require_mode(edge, St),
+    apply_select_command({edge_loop, edge_ring}, St).
+
+connect_hotkey(#st{selmode=edge}=St) ->
+    apply_edge_command(connect, St);
+connect_hotkey(#st{selmode=vertex}=St) ->
+    apply_vertex_command(connect, St);
+connect_hotkey(#st{selmode=Mode}) ->
+    throw({agent_error,
+           agent_fmt("connect requires edge or vertex mode (C hotkey), not ~w", [Mode])}).
+
+op_edge_ring_connect(Op, St) ->
     St1 = case maps:get(<<"expand_ring">>, Op, true) of
-              true ->
-                  require_mode(edge, St),
-                  apply_select_command({edge_loop, edge_ring}, St);
-              false ->
-                  require_mode(edge, St),
-                  St
+              true -> op_select_ring(St);
+              false -> require_mode(edge, St), St
           end,
-    hotkey_cut(St1).
+    connect_hotkey(St1).
 
 require_mode(Mode, #st{selmode=Mode}=St) -> St;
 require_mode(Mode, _St) ->
@@ -399,6 +402,8 @@ apply_save_state(#st{}=S, _Cmd) -> S;
 apply_save_state(Other, Cmd) ->
     throw({agent_error, agent_fmt("command ~p failed: ~p", [Cmd, Other])}).
 
+parse_connect_variant(default) -> default;
+parse_connect_variant(<<"default">>) -> default;
 parse_connect_variant(<<"edge">>) -> edge;
 parse_connect_variant(<<"edge_multiple">>) -> edge_multiple;
 parse_connect_variant(<<"vertex">>) -> vertex;

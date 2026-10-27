@@ -42,11 +42,13 @@ Failure:
 | `select` | `mode`, `ids` + optional `object`, **or** `normal` + `threshold` | Face selection by ids or by normal direction |
 | `extrude` | `distance`, optional `axis` (`normal`, `x`, `y`, `z`) | Region extrude + numeric move |
 | `bevel` | `distance` | Edge or face bevel (current mode) |
-| `cut` | optional `segments` (integer ≥2) | **Default (no `segments`):** same as **C** hotkey — `{edge,connect}` or `{vertex,connect}` (midpoint cut + connecting edges, one object). With `segments`: `{edge,{cut,N}}` only (split into N parts, no connect; edge mode). |
-| `connect` | optional `variant` | Extra connect modes (`edge_multiple`, `vertex_cuts`, …). Plain edge/vertex connect is usually **`cut`** without args. |
-| `select_edge_ring` | — | `{select,{edge_loop,edge_ring}}` — grow edge selection to ring |
-| `edge_ring_cut` | optional `expand_ring` (default true) | `select_edge_ring` then **`cut`** (in-object ring loop) |
-| `loop_cut` | — | `{edge,loop_cut}` — **splits into two objects** (unlike C / `cut`) |
+| `cut` | optional `segments` (integer ≥2, default 2) | `{edge,{cut,N}}` — split selected edges into N parts (edge mode). Hotkeys **2**–**0** map N=2..10. Not Connect. |
+| `connect` | optional `variant` | **C hotkey:** `{edge,connect}` or `{vertex,connect}` (default). Inserts connecting edges / loop across an edge ring — **one object**. Variants: `edge_multiple`, `vertex_cuts`, … |
+| `select_ring` | — | `{select,{edge_loop,edge_ring}}` — expand edge selection to ring (hotkey **G**) from seed edge(s) |
+| `select_edge_ring` | — | Alias of `select_ring` |
+| `edge_ring_connect` | optional `expand_ring` (default true) | `select_ring` then **`connect`** (in-object loop) |
+| `edge_ring_cut` | optional `expand_ring` | Alias of `edge_ring_connect` (name kept for older clients) |
+| `loop_cut` | — | `{edge,loop_cut}` — **splits into two objects** (unlike Connect) |
 | `inset` | `distance`, optional `type` (`inset_faces`, `inset_region`, `offset_region`) | Face inset via `wpc_inset` (face mode; numeric inset drag) |
 | `move` | `distance`, optional `axis` | Numeric move drag |
 | `scale` | `factor` | Uniform scale from selection center |
@@ -74,11 +76,11 @@ Use any TCP client. Python helper: `tools/wings_agent_client.py`.
 
 | User action | Mode | Tuple (via `wings:command/2`) |
 |-------------|------|----------------------------------|
-| **C** (cut + connect) | edge | `{edge, connect}` |
-| **C** | vertex | `{vertex, connect}` |
-| **2**–**0** (N equal segments) | edge | `{edge, {cut, N}}` (N=2..10) |
+| **C** (Connect) | edge | `{edge, connect}` |
+| **C** (Connect) | vertex | `{vertex, connect}` |
+| **2**–**0** (Cut N) | edge | `{edge, {cut, N}}` (N=2..10) |
 | Loop Cut | edge | `{edge, loop_cut}` |
-| Edge ring | edge | `{select, {edge_loop, edge_ring}}` |
+| Edge ring select | edge | `{select, {edge_loop, edge_ring}}` (hotkey **G**) |
 
 Hotkeys are defined in `src/wings_hotkey.erl` (default bindings; no repo-specific override found).
 
