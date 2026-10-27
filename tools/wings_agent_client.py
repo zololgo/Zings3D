@@ -10,6 +10,62 @@ import sys
 from typing import Any
 
 
+def _op(name: str, **fields: Any) -> dict[str, Any]:
+    return {"op": name, **fields}
+
+
+def op_cylinder(**fields: Any) -> dict[str, Any]:
+    return _op("cylinder", **fields)
+
+
+def op_geodome(**fields: Any) -> dict[str, Any]:
+    return _op("geodome", **fields)
+
+
+def op_rename(name: str, **fields: Any) -> dict[str, Any]:
+    return _op("rename", name=name, **fields)
+
+
+def op_material(name: str, **fields: Any) -> dict[str, Any]:
+    return _op("material", name=name, **fields)
+
+
+def op_uv_project(**fields: Any) -> dict[str, Any]:
+    return _op("uv_project", **fields)
+
+
+def op_uv_transform(**fields: Any) -> dict[str, Any]:
+    return _op("uv_transform", **fields)
+
+
+def op_uv_dump() -> dict[str, Any]:
+    return _op("uv_dump")
+
+
+def op_mat_info() -> dict[str, Any]:
+    return _op("mat_info")
+
+
+def op_view(**fields: Any) -> dict[str, Any]:
+    return _op("view", **fields)
+
+
+def op_rotate(angle: float, **fields: Any) -> dict[str, Any]:
+    return _op("rotate", angle=angle, **fields)
+
+
+def op_scale(factor: float, **fields: Any) -> dict[str, Any]:
+    return _op("scale", factor=factor, **fields)
+
+
+def op_select_all(mode: str, object_id: int) -> dict[str, Any]:
+    return _op("select", mode=mode, object=object_id, all=True)
+
+
+def op_export(path: str, fmt: str = "obj", **fields: Any) -> dict[str, Any]:
+    return _op("export", path=path, format=fmt, **fields)
+
+
 def send_cmd(host: str, port: int, payload: dict[str, Any], timeout: float = 120.0) -> dict[str, Any]:
     data = (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
     with socket.create_connection((host, port), timeout=timeout) as sock:

@@ -204,14 +204,44 @@ exec_op(#{<<"op">> := <<"move">>} = Op, St) ->
 exec_op(#{<<"op">> := <<"scale">>} = Op, St) ->
     St1 = op_scale(Op, St),
     {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"rotate">>} = Op, St) ->
+    St1 = op_rotate(Op, St),
+    {St1, scene_state(St1)};
 exec_op(#{<<"op">> := <<"export">>} = Op, St) ->
     Path = binary_to_list(maps:get(<<"path">>, Op)),
     Format = maps:get(<<"format">>, Op, <<"obj">>),
-    export_to(Path, Format, St),
-    {St, #{<<"path">> => list_to_binary(Path), <<"format">> => Format}};
+    IncludeUVs = bool_param(Op, <<"include_uvs">>, true),
+    export_to(Path, Format, IncludeUVs, St),
+    {St, #{<<"path">> => list_to_binary(Path), <<"format">> => Format,
+          <<"include_uvs">> => IncludeUVs}};
 exec_op(#{<<"op">> := <<"frame">>} = _Op, St) ->
     St1 = wings_view:command(frame, St),
     {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"cylinder">>} = Op, St) ->
+    St1 = make_cylinder(Op, St),
+    {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"geodome">>} = Op, St) ->
+    St1 = make_geodome(Op, St),
+    {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"rename">>} = Op, St) ->
+    St1 = apply_rename(Op, St),
+    {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"material">>} = Op, St) ->
+    St1 = apply_material(Op, St),
+    {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"uv_project">>} = Op, St) ->
+    {St1, Extra} = apply_uv_project(Op, St),
+    {St1, maps:merge(scene_state(St1), Extra)};
+exec_op(#{<<"op">> := <<"uv_transform">>} = Op, St) ->
+    {St1, Extra} = apply_uv_transform(Op, St),
+    {St1, maps:merge(scene_state(St1), Extra)};
+exec_op(#{<<"op">> := <<"uv_dump">>} = Op, St) ->
+    {St, apply_uv_dump(Op, St)};
+exec_op(#{<<"op">> := <<"view">>} = Op, St) ->
+    St1 = apply_view(Op, St),
+    {St1, maps:merge(scene_state(St1), apply_mat_info(Op, St1))};
+exec_op(#{<<"op">> := <<"mat_info">>} = Op, St) ->
+    {St, apply_mat_info(Op, St)};
 exec_op(#{<<"op">> := Op}, _St) ->
     throw({agent_error, <<"unknown op ", Op/binary>>}).
 
@@ -220,11 +250,347 @@ make_cube(Op, St) ->
     Y = float_param(Op, <<"y">>, 2.0),
     Z = float_param(Op, <<"z">>, 2.0),
     Cuts = int_param(Op, <<"cuts">>, 1),
+    MovX = float_param(Op, <<"mov_x">>, 0.0),
+    MovY = float_param(Op, <<"mov_y">>, 0.0),
+    MovZ = float_param(Op, <<"mov_z">>, 0.0),
+    Ground = bool_param(Op, <<"ground">>, true),
     Arg = [{nres, Cuts}, {xcube, X}, {ycube, Y}, {zcube, Z},
            {rot_x, 0}, {rot_y, 0}, {rot_z, 0},
-           {mov_x, 0}, {mov_y, 0}, {mov_z, 0},
-           {ground, true}, {spherizeflag, false}],
+           {mov_x, MovX}, {mov_y, MovY}, {mov_z, MovZ},
+           {ground, Ground}, {spherizeflag, false}],
     apply_shape_result(wpc_ncube:command({shape, {ncube, Arg}}, St), St).
+
+make_cylinder(Op, St) ->
+    Sections = int_param(Op, <<"sections">>, 8),
+    Height = float_param(Op, <<"height">>, 2.0),
+    Top = float_param(Op, <<"top_radius">>, 0.5),
+    Bot = float_param(Op, <<"bottom_radius">>, 0.5),
+    TopX = float_param(Op, <<"top_x">>, Top),
+    TopZ = float_param(Op, <<"top_z">>, Top),
+    BotX = float_param(Op, <<"bottom_x">>, Bot),
+    BotZ = float_param(Op, <<"bottom_z">>, Bot),
+    MovX = float_param(Op, <<"mov_x">>, 0.0),
+    MovY = float_param(Op, <<"mov_y">>, 0.0),
+    MovZ = float_param(Op, <<"mov_z">>, 0.0),
+    Ground = bool_param(Op, <<"ground">>, true),
+    Arg = [{sections, Sections}, {height, Height},
+           {top_x, TopX}, {top_z, TopZ},
+           {bottom_x, BotX}, {bottom_z, BotZ},
+           {thickness, 0.25}, {degrees, 360.0}, {angle_offset, 0.0},
+           {cylinder_type, cylinder},
+           {rot_x, 0.0}, {rot_y, 0.0}, {rot_z, 0.0},
+           {mov_x, MovX}, {mov_y, MovY}, {mov_z, MovZ},
+           {ground, Ground}],
+    apply_shape_result(wpc_cylinder:command({shape, {cylinder, Arg}}, St), St).
+
+make_geodome(Op, St) ->
+    Resolution = int_param(Op, <<"resolution">>, 1),
+    Base = atom_param(Op, <<"base">>, icosahedron),
+    Algorithm = atom_param(Op, <<"algorithm">>, frequency),
+    Spherize = bool_param(Op, <<"spherize">>, true),
+    Dome = bool_param(Op, <<"dome">>, false),
+    MovX = float_param(Op, <<"mov_x">>, 0.0),
+    MovY = float_param(Op, <<"mov_y">>, 0.0),
+    MovZ = float_param(Op, <<"mov_z">>, 0.0),
+    Scale = float_param(Op, <<"scale">>, 1.0),
+    %% geodome has no built-in scale; approximate via mov + later body scale,
+    %% or bake by using ground false and post-scale. Keep transform args.
+    Ground = bool_param(Op, <<"ground">>, false),
+    Arg = [{resolution, Resolution}, {baseflag, Base},
+           {algorithmflag, Algorithm}, {spherizeflag, Spherize},
+           {domeflag, Dome},
+           {rot_x, 0.0}, {rot_y, 0.0}, {rot_z, 0.0},
+           {mov_x, MovX}, {mov_y, MovY}, {mov_z, MovZ},
+           {ground, Ground}],
+    St1 = apply_shape_result(wpc_geodome:command({shape, {geodome, Arg}}, St), St),
+    case abs(Scale - 1.0) < 1.0e-6 of
+        true -> St1;
+        false ->
+            %% Select the new object (highest id) in body mode and scale.
+            Id = St1#st.onext - 1,
+            St2 = wings_sel:set(body, [{Id, gb_sets:singleton(0)}], St1),
+            finish_drag(wings_scale:setup({uniform, center}, St2), [Scale])
+    end.
+
+apply_rename(Op, St) ->
+    Id = int_param(Op, <<"object">>, default_object_id(St)),
+    NameBin = maps:get(<<"name">>, Op),
+    Name = binary_to_list(NameBin),
+    wings_obj:update(fun(We) -> We#we{name = Name} end, [Id], St).
+
+apply_material(Op, #st{mat=Mtab}=St0) ->
+    NameBin = maps:get(<<"name">>, Op),
+    NameAtom = list_to_atom(binary_to_list(NameBin)),
+    R = float_param(Op, <<"r">>, 0.8),
+    G = float_param(Op, <<"g">>, 0.8),
+    B = float_param(Op, <<"b">>, 0.8),
+    A = float_param(Op, <<"a">>, 1.0),
+    {Maps, Dir} = case maps:get(<<"map_kd">>, Op, undefined) of
+                      undefined -> {[], wings_pref:get_value(current_directory)};
+                      PathBin when is_binary(PathBin) ->
+                          Path = binary_to_list(PathBin),
+                          {[{diffuse, Path}], filename:dirname(Path)}
+                  end,
+    %% Drop existing so maps are reloaded (add_materials skips identical mats).
+    St = case gb_trees:lookup(NameAtom, Mtab) of
+             none -> St0;
+             {value, _} -> St0#st{mat=gb_trees:delete(NameAtom, Mtab)}
+         end,
+    Mat = [{opengl, [{diffuse, {R, G, B, A}}]}, {maps, Maps}],
+    {St1, NewNames} = wings_material:add_materials([{NameAtom, Mat}], Dir, St),
+    MatName = case NewNames of
+                  [{_, N} | _] -> N;
+                  [] -> NameAtom
+              end,
+    case bool_param(Op, <<"assign">>, true) of
+        true -> wings_material:command({assign, MatName}, St1);
+        false -> St1
+    end.
+
+%% view: set preview prefs (nearest filter, show textures, unlit/workmode)
+apply_view(Op, St) ->
+    maybe_set_pref(Op, <<"filter_texture">>, filter_texture, false,
+                   fun(B) -> wings_image:filter_images(B) end),
+    maybe_set_pref(Op, <<"show_textures">>, show_textures, true, fun(_) -> ok end),
+    maybe_set_pref(Op, <<"workmode">>, workmode, true, fun(_) -> ok end),
+    maybe_set_pref(Op, <<"show_edges">>, show_edges, true, fun(_) -> ok end),
+    %% Invalidate display lists so prefs take effect.
+    wings_dl:map(fun(#dlo{proxy_data=PD}=D, _) ->
+                         D#dlo{work=none, smooth=none, vab=none,
+                               proxy_data=wings_proxy:invalidate(PD, vab)};
+                    (D, _) -> D
+                 end, []),
+    wings_wm:dirty(),
+    St.
+
+maybe_set_pref(Op, Key, Pref, Default, Extra) ->
+    case maps:is_key(Key, Op) of
+        false -> ok;
+        true ->
+            B = bool_param(Op, Key, Default),
+            wings_pref:set_value(Pref, B),
+            Extra(B)
+    end.
+
+apply_mat_info(_Op, #st{mat=Mtab}) ->
+    Infos = [begin
+                 Maps = case lists:keyfind(maps, 1, Props) of
+                            {maps, M} -> M;
+                            false -> []
+                        end,
+                 MapKeys = [atom_to_binary(K, utf8) || {K, _} <- Maps],
+                 #{<<"name">> => atom_to_binary(Name, utf8),
+                   <<"map_keys">> => MapKeys,
+                   <<"has_diffuse_map">> => lists:keymember(diffuse, 1, Maps)}
+             end || {Name, Props} <- gb_trees:to_list(Mtab)],
+    #{<<"materials">> => Infos,
+      <<"filter_texture">> => wings_pref:get_value(filter_texture, false),
+      <<"show_textures">> => wings_pref:get_value(show_textures, true),
+      <<"workmode">> => wings_pref:get_value(workmode, true)}.
+
+%% ---- UV helpers (local) ----
+%% uv_project: planar-project selected faces.
+%%   axis: "x"|"y"|"z" (view along axis; remaining two -> U,V)
+%%         "cylinder" -> U=atan2(z,x), V=y
+%%   normalize: true -> fit selection to 0..1 before optional rect
+%%   rect: [u0,v0,u1,v1] -> place normalized island into that UV rectangle
+apply_uv_project(Op, #st{selmode=face, sel=Sel}=St) when Sel =/= [] ->
+    Axis = maps:get(<<"axis">>, Op, <<"z">>),
+    Raw = gather_projected(Sel, St#st.shapes, Axis),
+    case Raw of
+        [] -> throw({agent_error, <<"uv_project: no vertices in selection">>});
+        _ ->
+            Bounds0 = uv_bbox([UV || {_Id,_F,_V,UV} <- Raw]),
+            Norm = bool_param(Op, <<"normalize">>, true),
+            Mapped0 = case Norm of
+                          true -> [{Id,F,V,norm_uv(UV, Bounds0)} || {Id,F,V,UV} <- Raw];
+                          false -> Raw
+                      end,
+            Mapped = case maps:get(<<"rect">>, Op, undefined) of
+                         undefined -> Mapped0;
+                         Rect ->
+                             Xf = rect_fun(Rect),
+                             %% ensure normalized into rect
+                             Base = case Norm of
+                                        true -> Mapped0;
+                                        false ->
+                                            B = uv_bbox([UV || {_I,_F,_V,UV} <- Mapped0]),
+                                            [{I,F,V,norm_uv(UV, B)} || {I,F,V,UV} <- Mapped0]
+                                    end,
+                             [{I,F,V,Xf(UV)} || {I,F,V,UV} <- Base]
+                     end,
+            St1 = apply_uv_assignments(Mapped, St),
+            B1 = uv_bbox([UV || {_I,_F,_V,UV} <- Mapped]),
+            {St1, #{<<"uv_bounds">> => encode_uv_bounds(B1),
+                    <<"uv_count">> => length(Mapped),
+                    <<"axis">> => Axis}}
+    end;
+apply_uv_project(_Op, #st{selmode=Mode, sel=Sel}) ->
+    throw({agent_error,
+           agent_fmt("uv_project needs face selection (mode=~w, sel_len=~p)",
+                     [Mode, length(Sel)])}).
+
+apply_uv_transform(Op, #st{selmode=face, sel=Sel}=St) when Sel =/= [] ->
+    Raw = gather_existing_uvs(Sel, St#st.shapes),
+    case Raw of
+        [] -> throw({agent_error, <<"uv_transform: selection has no UVs; uv_project first">>});
+        _ ->
+            NeedNorm = maps:is_key(<<"rect">>, Op) orelse bool_param(Op, <<"normalize">>, false),
+            Base = case NeedNorm of
+                       true ->
+                           B = uv_bbox([UV || {_I,_F,_V,UV} <- Raw]),
+                           [{I,F,V,norm_uv(UV, B)} || {I,F,V,UV} <- Raw];
+                       false -> Raw
+                   end,
+            Xf = case maps:get(<<"rect">>, Op, undefined) of
+                     undefined ->
+                         U = float_param(Op, <<"u">>, 0.0),
+                         Voff = float_param(Op, <<"v">>, 0.0),
+                         SU = float_param(Op, <<"scale_u">>, 1.0),
+                         SV = float_param(Op, <<"scale_v">>, 1.0),
+                         fun({X, Y}) -> {X * SU + U, Y * SV + Voff} end;
+                     Rect ->
+                         rect_fun(Rect)
+                 end,
+            Mapped = [{I,F,V,Xf(UV)} || {I,F,V,UV} <- Base],
+            St1 = apply_uv_assignments(Mapped, St),
+            B1 = uv_bbox([UV || {_I,_F,_V,UV} <- Mapped]),
+            {St1, #{<<"uv_bounds">> => encode_uv_bounds(B1),
+                    <<"uv_count">> => length(Mapped)}}
+    end;
+apply_uv_transform(_Op, #st{selmode=Mode, sel=Sel}) ->
+    throw({agent_error,
+           agent_fmt("uv_transform needs face selection (mode=~w, sel_len=~p)",
+                     [Mode, length(Sel)])}).
+
+apply_uv_dump(_Op, #st{shapes=Shs, sel=Sel}=St) ->
+    Objs = [begin
+                UVs = collect_object_uvs(We),
+                #{<<"id">> => Id,
+                  <<"name">> => obj_name(We),
+                  <<"uv_count">> => length(UVs),
+                  <<"uv_bounds">> => encode_uv_bounds(uv_bbox(UVs)),
+                  <<"has_uvs">> => wings_va:any_uvs(We)}
+            end || {Id, We} <- gb_trees:to_list(Shs)],
+    SelUVs = gather_existing_uvs(Sel, Shs),
+    #{<<"objects">> => Objs,
+      <<"selection_uv_count">> => length(SelUVs),
+      <<"selection_uv_bounds">> => encode_uv_bounds(uv_bbox([UV || {_I,_F,_V,UV} <- SelUVs])),
+      <<"selection_mode">> => atom_to_binary(St#st.selmode, utf8)}.
+
+gather_projected(Sel, Shapes, Axis) ->
+    lists:append([gather_projected_obj(Id, Items, Shapes, Axis) || {Id, Items} <- Sel]).
+
+gather_projected_obj(Id, Items, Shapes, Axis) ->
+    We = gb_trees:get(Id, Shapes),
+    Faces = case is_list(Items) of true -> Items; false -> gb_sets:to_list(Items) end,
+    lists:append([gather_projected_face(Id, F, We, Axis) || F <- Faces]).
+
+gather_projected_face(Id, Face, #we{vp=Vtab}=We, Axis) ->
+    Vs = wings_face:vertices_ccw(Face, We),
+    [{Id, Face, V, project_axis(Axis, array:get(V, Vtab))} || V <- Vs].
+
+gather_existing_uvs(Sel, Shapes) ->
+    lists:append([gather_existing_obj(Id, Items, Shapes) || {Id, Items} <- Sel]).
+
+gather_existing_obj(Id, Items, Shapes) ->
+    We = gb_trees:get(Id, Shapes),
+    Faces = case is_list(Items) of true -> Items; false -> gb_sets:to_list(Items) end,
+    lists:append([gather_existing_face(Id, F, We) || F <- Faces]).
+
+gather_existing_face(Id, Face, We) ->
+    %% Per-corner UV via edge_attrs (face_attr/4 returns the whole face list).
+    wings_face:fold(
+      fun(V, Edge, _E, Acc) ->
+              case wings_va:attr(uv, wings_va:edge_attrs(Edge, Face, We)) of
+                  {U, Vv} when is_float(U), is_float(Vv) ->
+                      [{Id, Face, V, {U, Vv}} | Acc];
+                  _ ->
+                      Acc
+              end
+      end, [], Face, We).
+
+apply_uv_assignments(Mapped, St) ->
+    %% Group by object id, then set_vtx_face_uvs for each (V, Face, UV).
+    ByObj = lists:foldl(fun({Id, F, V, UV}, Acc) ->
+                                maps:update_with(Id, fun(L) -> [{F, V, UV}|L] end, [{F, V, UV}], Acc)
+                        end, #{}, Mapped),
+    maps:fold(fun(Id, Triples, S0) ->
+                      We0 = gb_trees:get(Id, S0#st.shapes),
+                      We1 = lists:foldl(fun({F, V, UV}, W) ->
+                                                wings_va:set_vtx_face_uvs(V, [F], UV, W)
+                                        end, We0, Triples),
+                      S0#st{shapes=gb_trees:update(Id, We1, S0#st.shapes)}
+              end, St, ByObj).
+
+collect_object_uvs(We) ->
+    case wings_va:any_uvs(We) of
+        false -> [];
+        true ->
+            Faces = gb_trees:keys(We#we.fs),
+            lists:append([begin
+                              wings_face:fold(
+                                fun(_V, Edge, _E, Acc) ->
+                                        case wings_va:attr(uv, wings_va:edge_attrs(Edge, Face, We)) of
+                                            {U, V} when is_float(U), is_float(V) -> [{U,V}|Acc];
+                                            _ -> Acc
+                                        end
+                                end, [], Face, We)
+                          end || Face <- Faces])
+    end.
+
+project_axis(<<"x">>, {_, Y, Z}) -> {Y, Z};
+project_axis(<<"y">>, {X, _, Z}) -> {X, Z};
+project_axis(<<"z">>, {X, Y, _}) -> {X, Y};
+project_axis(<<"cylinder">>, {X, Y, Z}) ->
+    U = math:atan2(Z, X) / (2.0 * math:pi()) + 0.5,
+    {U, Y};
+project_axis(A, Pos) when is_atom(A) ->
+    project_axis(atom_to_binary(A, utf8), Pos);
+project_axis(_, {X, Y, _}) -> {X, Y}.
+
+uv_bbox([]) -> {0.0, 1.0, 0.0, 1.0};
+uv_bbox([{U, V}|Rest]) ->
+    lists:foldl(fun({X, Y}, {MiU, MaU, MiV, MaV}) ->
+                        {min(MiU, X), max(MaU, X), min(MiV, Y), max(MaV, Y)}
+                end, {U, U, V, V}, Rest).
+
+norm_uv({U, V}, {MiU, MaU, MiV, MaV}) ->
+    DU = max(MaU - MiU, 1.0e-9),
+    DV = max(MaV - MiV, 1.0e-9),
+    {(U - MiU) / DU, (V - MiV) / DV}.
+
+rect_fun([U0, V0, U1, V1]) ->
+    BU0 = float_val(U0), BV0 = float_val(V0),
+    BU1 = float_val(U1), BV1 = float_val(V1),
+    DU = BU1 - BU0, DV = BV1 - BV0,
+    fun({X, Y}) -> {BU0 + X * DU, BV0 + Y * DV} end.
+
+encode_uv_bounds(undefined) -> null;
+encode_uv_bounds({MiU, MaU, MiV, MaV}) ->
+    [MiU, MaU, MiV, MaV].
+
+bool_param(Map, Key, Default) ->
+    case maps:get(Key, Map, undefined) of
+        undefined -> Default;
+        true -> true;
+        false -> false;
+        <<"true">> -> true;
+        <<"false">> -> false;
+        1 -> true;
+        0 -> false;
+        _ -> Default
+    end.
+
+atom_param(Map, Key, Default) ->
+    case maps:get(Key, Map, undefined) of
+        undefined -> Default;
+        A when is_atom(A) -> A;
+        B when is_binary(B) ->
+            try binary_to_existing_atom(B, utf8)
+            catch error:badarg -> list_to_atom(binary_to_list(B))
+            end
+    end.
 
 apply_file_new(St) ->
     case wings_file:command(confirmed_new, St) of
@@ -245,31 +611,62 @@ apply_shape_result(Other, _) ->
 apply_select(Op, St) ->
     Mode = parse_mode(maps:get(<<"mode">>, Op, atom_to_binary(St#st.selmode, utf8))),
     St0 = wings_sel:set(Mode, [], St),
-    case maps:is_key(<<"ids">>, Op) of
+    case bool_param(Op, <<"all">>, false) of
         true ->
-            Ids = [int_val(I) || I <- maps:get(<<"ids">>, Op)],
             Obj = int_param(Op, <<"object">>, default_object_id(St0)),
-            Sel = [{Obj, gb_sets:from_list(Ids)}],
-            wings_sel:set(Mode, Sel, St0);
+            Ids = all_ids_for_mode(Mode, Obj, St0),
+            wings_sel:set(Mode, [{Obj, gb_sets:from_list(Ids)}], St0);
         false ->
-            case maps:is_key(<<"normal">>, Op) of
+            case maps:is_key(<<"ids">>, Op) of
                 true ->
-                    N = parse_vec3(maps:get(<<"normal">>, Op)),
-                    Thresh = float_param(Op, <<"threshold">>, 0.9),
-                    select_by_normal(Mode, N, Thresh, St0);
+                    Ids = [int_val(I) || I <- maps:get(<<"ids">>, Op)],
+                    Obj = int_param(Op, <<"object">>, default_object_id(St0)),
+                    Sel = [{Obj, gb_sets:from_list(Ids)}],
+                    wings_sel:set(Mode, Sel, St0);
                 false ->
-                    throw({agent_error, <<"select requires ids or normal">>})
+                    case maps:is_key(<<"normal">>, Op) of
+                        true ->
+                            N = parse_vec3(maps:get(<<"normal">>, Op)),
+                            Thresh = float_param(Op, <<"threshold">>, 0.9),
+                            ObjFilter = case maps:is_key(<<"object">>, Op) of
+                                            true -> int_param(Op, <<"object">>, 0);
+                                            false -> all
+                                        end,
+                            select_by_normal(Mode, N, Thresh, ObjFilter, St0);
+                        false ->
+                            throw({agent_error, <<"select requires ids, normal, or all">>})
+                    end
             end
     end.
 
-select_by_normal(face, N0, Thresh, #st{shapes=Shs}=St) ->
+all_ids_for_mode(face, Obj, #st{shapes=Shs}) ->
+    We = gb_trees:get(Obj, Shs),
+    gb_trees:keys(We#we.fs);
+all_ids_for_mode(edge, Obj, #st{shapes=Shs}) ->
+    We = gb_trees:get(Obj, Shs),
+    wings_util:array_keys(We#we.es);
+all_ids_for_mode(vertex, Obj, #st{shapes=Shs}) ->
+    We = gb_trees:get(Obj, Shs),
+    wings_util:array_keys(We#we.vp);
+all_ids_for_mode(body, _Obj, _St) ->
+    [0].
+
+select_by_normal(face, N0, Thresh, ObjFilter, #st{shapes=Shs}=St) ->
     N = e3d_vec:norm(N0),
+    Shapes = case ObjFilter of
+                 all -> gb_trees:to_list(Shs);
+                 Id ->
+                     case gb_trees:lookup(Id, Shs) of
+                         {value, We} -> [{Id, We}];
+                         none -> []
+                     end
+             end,
     Sel = [{Id, gb_sets:from_list(Faces)} ||
-              {Id, We} <- gb_trees:to_list(Shs),
+              {Id, We} <- Shapes,
               Faces <- [select_faces_normal(N, Thresh, We)],
               Faces =/= []],
     wings_sel:set(face, Sel, St);
-select_by_normal(Mode, _N, _Thresh, _St) ->
+select_by_normal(Mode, _N, _Thresh, _Obj, _St) ->
     throw({agent_error, io_lib:format("normal selection supports face mode only, not ~w", [Mode])}).
 
 select_faces_normal(N, Thresh, We) ->
@@ -309,7 +706,14 @@ op_move(Op, St) ->
 
 op_scale(Op, St) ->
     Factor = float_param(Op, <<"factor">>, 1.2),
-    finish_drag(wings_scale:setup({uniform, center}, St), [Factor]).
+    AxisBin = maps:get(<<"axis">>, Op, <<"uniform">>),
+    ScaleVec = parse_scale_axis(AxisBin),
+    finish_drag(wings_scale:setup({ScaleVec, center}, St), [Factor]).
+
+op_rotate(Op, St) ->
+    Angle = float_param(Op, <<"angle">>, 15.0),
+    Axis = parse_axis(maps:get(<<"axis">>, Op, <<"y">>)),
+    finish_drag(wings_rotate:setup({Axis, center}, St), [Angle]).
 
 op_inset(Op, St) ->
     Dist = float_param(Op, <<"distance">>, 0.1),
@@ -446,20 +850,20 @@ parse_inset_type(<<"inset_region">>) -> inset_region;
 parse_inset_type(<<"offset_region">>) -> offset_region;
 parse_inset_type(B) when is_binary(B) -> binary_to_existing_atom(B, utf8).
 
-export_to(Path, <<"obj">>, St) ->
+export_to(Path, <<"obj">>, IncludeUVs, St) ->
     put(wings_not_running, {export, Path}),
     Attr = [{subdivisions, 0}, {tesselation, none},
-            {include_uvs, false}, {include_normals, true}],
+            {include_uvs, IncludeUVs}, {include_normals, true}],
     _ = wpc_obj:command({file, {export, {obj, Attr}}}, St),
     erase(wings_not_running),
     ok;
-export_to(Path, <<"fbx">>, St) ->
+export_to(Path, <<"fbx">>, _IncludeUVs, St) ->
     put(wings_not_running, {export, Path}),
     Attr = [{subdivisions, 0}, {tesselation, none}],
     _ = wpc_fbx_p:command({file, {export, {fbx_model, Attr}}}, St),
     erase(wings_not_running),
     ok;
-export_to(_, Format, _St) ->
+export_to(_, Format, _, _St) ->
     throw({agent_error, io_lib:format("unsupported export format ~s", [Format])}).
 
 scene_state(#st{selmode=Mode, sel=Sel, shapes=Shs}=St) ->
@@ -539,6 +943,20 @@ parse_axis(<<"y">>) -> y;
 parse_axis(<<"z">>) -> z;
 parse_axis(<<"uniform">>) -> uniform;
 parse_axis(B) when is_binary(B) -> binary_to_existing_atom(B, utf8).
+
+%% Scale axis: uniform | x|y|z | radial_x|radial_y|radial_z
+parse_scale_axis(<<"uniform">>) -> uniform;
+parse_scale_axis(<<"x">>) -> x;
+parse_scale_axis(<<"y">>) -> y;
+parse_scale_axis(<<"z">>) -> z;
+parse_scale_axis(<<"radial_x">>) -> {radial, x};
+parse_scale_axis(<<"radial_y">>) -> {radial, y};
+parse_scale_axis(<<"radial_z">>) -> {radial, z};
+parse_scale_axis(<<"radial">>) -> {radial, y};
+parse_scale_axis(B) when is_binary(B) ->
+    try binary_to_existing_atom(B, utf8)
+    catch error:badarg -> uniform
+    end.
 
 parse_vec3([X,Y,Z]) -> {float_val(X), float_val(Y), float_val(Z)};
 parse_vec3(#{<<"x">> := X, <<"y">> := Y, <<"z">> := Z}) ->
