@@ -157,7 +157,10 @@ exec_op(#{<<"op">> := <<"redo">>} = _Op, St) ->
     {St1, scene_state(St1)};
 exec_op(#{<<"op">> := <<"mode">>} = Op, St) ->
     Mode = parse_mode(maps:get(<<"mode">>, Op, <<"face">>)),
-    St1 = wings_sel:set(Mode, [], St),
+    St1 = wings_sel_conv:mode(Mode, St),
+    {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"clear_select">>} = _Op, St) ->
+    St1 = wings_sel:clear(St),
     {St1, scene_state(St1)};
 exec_op(#{<<"op">> := <<"cube">>} = Op, St) ->
     St1 = make_cube(Op, St),
@@ -172,7 +175,10 @@ exec_op(#{<<"op">> := <<"bevel">>} = Op, St) ->
     St1 = op_bevel(Op, St),
     {St1, scene_state(St1)};
 exec_op(#{<<"op">> := <<"loop_cut">>} = _Op, St) ->
-    St1 = wings_edge_cmd:loop_cut(St),
+    St1 = apply_loop_cut(St),
+    {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"inset">>} = Op, St) ->
+    St1 = op_inset(Op, St),
     {St1, scene_state(St1)};
 exec_op(#{<<"op">> := <<"move">>} = Op, St) ->
     St1 = op_move(Op, St),
@@ -185,6 +191,9 @@ exec_op(#{<<"op">> := <<"export">>} = Op, St) ->
     Format = maps:get(<<"format">>, Op, <<"obj">>),
     export_to(Path, Format, St),
     {St, #{<<"path">> => list_to_binary(Path), <<"format">> => Format}};
+exec_op(#{<<"op">> := <<"frame">>} = _Op, St) ->
+    St1 = wings_view:command(frame, St),
+    {St1, scene_state(St1)};
 exec_op(#{<<"op">> := Op}, _St) ->
     throw({agent_error, <<"unknown op ", Op/binary>>}).
 
@@ -239,7 +248,7 @@ select_by_normal(face, N0, Thresh, #st{shapes=Shs}=St) ->
     N = e3d_vec:norm(N0),
     Sel = [{Id, gb_sets:from_list(Faces)} ||
               {Id, We} <- gb_trees:to_list(Shs),
-              Faces = select_faces_normal(N, Thresh, We),
+              Faces <- [select_faces_normal(N, Thresh, We)],
               Faces =/= []],
     wings_sel:set(face, Sel, St);
 select_by_normal(Mode, _N, _Thresh, _St) ->
@@ -251,7 +260,7 @@ select_faces_normal(N, Thresh, We) ->
     [Face || Face <- Faces,
              begin
                  Vs = wings_face:vertices_ccw(Face, We),
-                 Fn = wings_face:face_normal_cw(Vs, Vtab),
+                 Fn = wings_face:face_normal_ccw(Vs, Vtab),
                  e3d_vec:dot(N, e3d_vec:norm(Fn)) >= Thresh
              end].
 
@@ -284,10 +293,56 @@ op_scale(Op, St) ->
     Factor = float_param(Op, <<"factor">>, 1.2),
     finish_drag(wings_scale:setup({uniform, center}, St), [Factor]).
 
-finish_drag({drag, Drag}, Move) ->
+op_inset(Op, St) ->
+    Dist = float_param(Op, <<"distance">>, 0.1),
+    InsetType = parse_inset_type(maps:get(<<"type">>, Op, <<"inset_faces">>)),
+    St0 = St#st{selmode=face},
+    case wpc_inset:command({face, InsetType}, St0) of
+        {drag, Drag} ->
+            finish_drag({drag, Drag}, [Dist]);
+        Other ->
+            throw({agent_error, io_lib:format("inset failed: ~p", [Other])})
+    end.
+
+apply_loop_cut(St) ->
+    case wings_edge_cmd:command(loop_cut, St) of
+        {save_state, #st{}=S} -> S;
+        #st{}=S -> S;
+        Other ->
+            throw({agent_error, io_lib:format("loop_cut failed: ~p", [Other])})
+    end.
+
+finish_drag({drag, Drag}, Move0) ->
+    Units = wings_drag:drag_units(Drag),
+    Move = pad_move_for_units(Units, ensure_move_list(Move0)),
     wings_drag:apply_numeric(Drag, Move);
 finish_drag(Other, _Move) ->
     throw({agent_error, io_lib:format("expected drag, got ~p", [Other])}).
+
+ensure_move_list(V) when is_number(V) -> [V];
+ensure_move_list(L) when is_list(L) -> L.
+
+pad_move_for_units([skip|Us], Vs) ->
+    [0.0 | pad_move_for_units(Us, Vs)];
+pad_move_for_units([_|Us], [V|Vs]) ->
+    [numeric_value(V) | pad_move_for_units(Us, Vs)];
+pad_move_for_units([_|Us], []) ->
+    %% Default missing values (e.g. inset bump) to 0, like numeric entry.
+    [0.0 | pad_move_for_units(Us, [])];
+pad_move_for_units([], []) ->
+    [];
+pad_move_for_units([], Extra) ->
+    throw({agent_error,
+           agent_fmt("numeric move has extra values ~p", [Extra])}).
+
+numeric_value(V) when is_integer(V) -> V * 1.0;
+numeric_value(V) when is_float(V) -> V;
+numeric_value(V) -> float_val(V).
+
+parse_inset_type(<<"inset_faces">>) -> inset_faces;
+parse_inset_type(<<"inset_region">>) -> inset_region;
+parse_inset_type(<<"offset_region">>) -> offset_region;
+parse_inset_type(B) when is_binary(B) -> binary_to_existing_atom(B, utf8).
 
 export_to(Path, <<"obj">>, St) ->
     put(wings_not_running, {export, Path}),
@@ -367,7 +422,7 @@ default_object_id(#st{sel=[{Id,_}|_]}) -> Id;
 default_object_id(#st{shapes=Shs}) ->
     case gb_trees:is_empty(Shs) of
         true -> 1;
-        false -> gb_trees:smallest_key(Shs)
+        false -> wings_util:gb_trees_smallest_key(Shs)
     end.
 
 parse_mode(<<"vertex">>) -> vertex;
@@ -411,6 +466,9 @@ format_exception(error, Reason) ->
     unicode:characters_to_binary(io_lib:format("~p", [Reason]));
 format_exception(C, R) ->
     unicode:characters_to_binary(io_lib:format("~p:~p", [C, R])).
+
+agent_fmt(Fmt, Args) ->
+    unicode:characters_to_binary(io_lib:format(Fmt, Args)).
 
 decode_json(Line) ->
     try

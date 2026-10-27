@@ -12,7 +12,7 @@
 %%
 
 -module(wings_drag).
--export([do_drag/2,apply_numeric/2,fold/3,fold/4,
+-export([do_drag/2,apply_numeric/2,drag_units/1,fold/3,fold/4,
          matrix/3,matrix/4,general/4,drag_only/4,
          compose/1,translate_fun/2]).
 
@@ -493,6 +493,8 @@ do_drag(Drag0, _) ->
     wings_wm:later(revert_state),
     keep.
 
+drag_units(#drag{unit=Units}) -> Units.
+
 apply_numeric(#drag{unit=Units}=Drag0, Move) when length(Units) =:= length(Move) ->
     {_,X,Y} = wings_wm:local_mouse_state(),
     Ev = #mousemotion{x=X,y=Y,state=0},
@@ -501,7 +503,8 @@ apply_numeric(#drag{unit=Units}=Drag0, Move) when length(Units) =:= length(Move)
     Drag2 = possible_falloff_update(Move, Drag1),
     Drag = ?SLOW(motion_update(Move, Drag2)),
     wings_tweak:toggle_draw(true),
-    wings_dl:map(fun invalidate_fun/2, []),
+    %% Do not invalidate before normalize: invalidate_fun clears #dlo.split
+    %% that wings_draw:join/1 needs (same as {drag_arguments, Move} path).
     St = normalize(Move, Drag),
     St#st{drag_args=Move}.
 
