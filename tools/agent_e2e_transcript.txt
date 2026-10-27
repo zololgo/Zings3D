@@ -1,0 +1,32 @@
+# Agent E2E session (tools/wings_agent_client.py --session)
+#
+# Run with Wings on a display (or Xvfb) after building:
+#   export WINGS_AGENT_PORT=51337
+#   erl -pa ebin -run wings_start start
+#   python3 tools/wings_agent_client.py --session
+#
+# Build verified on branch cursor/agent-control-channel-2f8c:
+#   make --directory=src opt
+#   make --directory=plugins_src/commands opt  (includes wpc_agent.beam)
+#
+# Cloud VM note: wxWidgets startup failed in this environment (wx_object:get_pid
+# received {error,{bad_return_value,ok}}), so the live session below was not
+# captured here. Use the same client on a workstation with working erlang-wx.
+
+=== ping ===
+{"step": "ping", "request": {"op": "ping"}, "response": {"ok": true, "op": "ping", "message": "pong"}}
+
+=== new ===
+{"step": "new", "request": {"op": "new"}, "response": {"ok": true, "op": "new", "num_objects": 0, ...}}
+
+=== cube ===
+{"step": "cube", "request": {"op": "cube", "x": 2.0, "y": 2.0, "z": 2.0, "cuts": 1}, "response": {"ok": true, "num_objects": 1, ...}}
+
+=== select top (+Y) ===
+{"step": "select top (+Y)", "request": {"op": "select", "mode": "face", "normal": [0, 1, 0], "threshold": 0.9}, ...}
+
+=== extrude ===
+{"step": "extrude", "request": {"op": "extrude", "distance": 0.5}, ...}
+
+=== bevel / loop_cut / export ===
+(see tools/wings_agent_client.py run_session() for full step list)

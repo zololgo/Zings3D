@@ -28,6 +28,7 @@ TYPE_FLAGS=
 endif
 
 MODULES= \
+	wpc_agent \
 	wpc_absolute_move \
 	wpc_absolute_scale \
 	wpc_align_to_axis \

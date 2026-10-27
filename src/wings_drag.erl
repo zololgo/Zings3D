@@ -12,7 +12,7 @@
 %%
 
 -module(wings_drag).
--export([do_drag/2,fold/3,fold/4,
+-export([do_drag/2,apply_numeric/2,fold/3,fold/4,
          matrix/3,matrix/4,general/4,drag_only/4,
          compose/1,translate_fun/2]).
 
@@ -482,14 +482,8 @@ do_drag(#drag{flags=Flags}=Drag, none) ->
     wings_tweak:toggle_draw(false),
     {seq,push,handle_drag_event_2(Ev, start_pos(X, Y, Drag))};
 do_drag(#drag{unit=Units}=Drag0, Move) when length(Units) =:= length(Move) ->
-    {_,X,Y} = wings_wm:local_mouse_state(),
-    Ev = #mousemotion{x=X,y=Y,state=0},
-    Drag1 = motion(Ev, start_pos(X,Y,Drag0)),
-    ungrab(Drag1),
-    Drag2 = possible_falloff_update(Move, Drag1),
-    Drag = ?SLOW(motion_update(Move, Drag2)),
-    St = normalize(Move, Drag),
-    DragEnded = {new_state,St#st{drag_args=Move}},
+    St = apply_numeric(Drag0, Move),
+    DragEnded = {new_state,St},
     wings_wm:later(DragEnded),
     keep;
 do_drag(Drag0, _) ->
@@ -498,6 +492,18 @@ do_drag(Drag0, _) ->
     ungrab(start_pos(X,Y,Drag0)),
     wings_wm:later(revert_state),
     keep.
+
+apply_numeric(#drag{unit=Units}=Drag0, Move) when length(Units) =:= length(Move) ->
+    {_,X,Y} = wings_wm:local_mouse_state(),
+    Ev = #mousemotion{x=X,y=Y,state=0},
+    Drag1 = motion(Ev, start_pos(X,Y,Drag0)),
+    ungrab(Drag1),
+    Drag2 = possible_falloff_update(Move, Drag1),
+    Drag = ?SLOW(motion_update(Move, Drag2)),
+    wings_tweak:toggle_draw(true),
+    wings_dl:map(fun invalidate_fun/2, []),
+    St = normalize(Move, Drag),
+    St#st{drag_args=Move}.
 
 gl_rescale_normal() ->
     case wings_gl:is_ext('GL_EXT_rescale_normal') of
