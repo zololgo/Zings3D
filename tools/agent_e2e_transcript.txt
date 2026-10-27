@@ -1,0 +1,7 @@
+Verified E2E + house test transcript (OTP 27, Linux, DISPLAY set).
+
+Full JSON log: tools/agent_e2e_transcript.json
+
+Run locally:
+  python3 tools/wings_agent_client.py --session
+  python3 tools/wings_agent_client.py --house
