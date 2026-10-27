@@ -42,7 +42,11 @@ Failure:
 | `select` | `mode`, `ids` + optional `object`, **or** `normal` + `threshold` | Face selection by ids or by normal direction |
 | `extrude` | `distance`, optional `axis` (`normal`, `x`, `y`, `z`) | Region extrude + numeric move |
 | `bevel` | `distance` | Edge or face bevel (current mode) |
-| `loop_cut` | — | Loop cut on current edge selection; **splits the object into two** body objects (Wings default) |
+| `cut` | optional `segments` (integer ≥2) | **Default (no `segments`):** same as **C** hotkey — `{edge,connect}` or `{vertex,connect}` (midpoint cut + connecting edges, one object). With `segments`: `{edge,{cut,N}}` only (split into N parts, no connect; edge mode). |
+| `connect` | optional `variant` | Extra connect modes (`edge_multiple`, `vertex_cuts`, …). Plain edge/vertex connect is usually **`cut`** without args. |
+| `select_edge_ring` | — | `{select,{edge_loop,edge_ring}}` — grow edge selection to ring |
+| `edge_ring_cut` | optional `expand_ring` (default true) | `select_edge_ring` then **`cut`** (in-object ring loop) |
+| `loop_cut` | — | `{edge,loop_cut}` — **splits into two objects** (unlike C / `cut`) |
 | `inset` | `distance`, optional `type` (`inset_faces`, `inset_region`, `offset_region`) | Face inset via `wpc_inset` (face mode; numeric inset drag) |
 | `move` | `distance`, optional `axis` | Numeric move drag |
 | `scale` | `factor` | Uniform scale from selection center |
@@ -65,6 +69,18 @@ python3 tools/wings_agent_client.py --cmd '{"op":"state"}'
 ## Client library
 
 Use any TCP client. Python helper: `tools/wings_agent_client.py`.
+
+## Wings command tuples (reference)
+
+| User action | Mode | Tuple (via `wings:command/2`) |
+|-------------|------|----------------------------------|
+| **C** (cut + connect) | edge | `{edge, connect}` |
+| **C** | vertex | `{vertex, connect}` |
+| **2**–**0** (N equal segments) | edge | `{edge, {cut, N}}` (N=2..10) |
+| Loop Cut | edge | `{edge, loop_cut}` |
+| Edge ring | edge | `{select, {edge_loop, edge_ring}}` |
+
+Hotkeys are defined in `src/wings_hotkey.erl` (default bindings; no repo-specific override found).
 
 ## Verified runs
 

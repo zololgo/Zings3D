@@ -175,7 +175,19 @@ exec_op(#{<<"op">> := <<"bevel">>} = Op, St) ->
     St1 = op_bevel(Op, St),
     {St1, scene_state(St1)};
 exec_op(#{<<"op">> := <<"loop_cut">>} = _Op, St) ->
-    St1 = apply_loop_cut(St),
+    St1 = apply_edge_command(loop_cut, St),
+    {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"cut">>} = Op, St) ->
+    St1 = op_cut(Op, St),
+    {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"connect">>} = Op, St) ->
+    St1 = op_connect(Op, St),
+    {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"select_edge_ring">>} = _Op, St) ->
+    St1 = apply_select_command({edge_loop, edge_ring}, St),
+    {St1, scene_state(St1)};
+exec_op(#{<<"op">> := <<"edge_ring_cut">>} = Op, St) ->
+    St1 = op_edge_ring_cut(Op, St),
     {St1, scene_state(St1)};
 exec_op(#{<<"op">> := <<"inset">>} = Op, St) ->
     St1 = op_inset(Op, St),
@@ -304,13 +316,98 @@ op_inset(Op, St) ->
             throw({agent_error, io_lib:format("inset failed: ~p", [Other])})
     end.
 
-apply_loop_cut(St) ->
-    case wings_edge_cmd:command(loop_cut, St) of
-        {save_state, #st{}=S} -> S;
-        #st{}=S -> S;
-        Other ->
-            throw({agent_error, io_lib:format("loop_cut failed: ~p", [Other])})
+%% Default `cut` matches the C hotkey in wings_hotkey.erl:
+%%   {edge,$c,{edge,connect}}  and  {vertex,$c,{vertex,connect}}
+%% (split selected edges at midpoints and connect — one object).
+%% Optional `segments` (N>=2) uses menu/hotkey {edge,{cut,N}} — vertices only.
+op_cut(Op, St) ->
+    case maps:get(<<"segments">>, Op, undefined) of
+        undefined ->
+            hotkey_cut(St);
+        Seg ->
+            N = int_val(Seg),
+            case N < 2 of
+                true -> throw({agent_error, <<"segments must be at least 2">>});
+                false ->
+                    require_mode(edge, St),
+                    apply_edge_command({cut, N}, St)
+            end
     end.
+
+hotkey_cut(#st{selmode=edge}=St) ->
+    apply_edge_command(connect, St);
+hotkey_cut(#st{selmode=vertex}=St) ->
+    apply_vertex_command(connect, St);
+hotkey_cut(#st{selmode=Mode}) ->
+    throw({agent_error,
+           agent_fmt("cut requires edge or vertex mode (C hotkey), not ~w", [Mode])}).
+
+op_connect(Op, St) ->
+    case parse_connect_variant(maps:get(<<"variant">>, Op, <<"edge">>)) of
+        edge ->
+            require_mode(edge, St),
+            apply_edge_command(connect, St);
+        edge_multiple ->
+            require_mode(edge, St),
+            Count = int_param(Op, <<"count">>, 1),
+            case wings_edge_cmd:command(connect_multiple, St) of
+                {drag, Drag} ->
+                    finish_drag({drag, Drag}, [Count]);
+                Other ->
+                    throw({agent_error, agent_fmt("connect_multiple failed: ~p", [Other])})
+            end;
+        vertex ->
+            require_mode(vertex, St),
+            apply_vertex_command(connect, St);
+        vertex_cuts ->
+            require_mode(vertex, St),
+            apply_vertex_command(connect_cuts, St);
+        vertex_connecting_edge ->
+            require_mode(vertex, St),
+            apply_vertex_command(connecting_edge, St);
+        connect_slide ->
+            throw({agent_error,
+                   <<"connect_slide requires interactive slide; use variant edge instead">>})
+    end.
+
+op_edge_ring_cut(Op, St) ->
+    St1 = case maps:get(<<"expand_ring">>, Op, true) of
+              true ->
+                  require_mode(edge, St),
+                  apply_select_command({edge_loop, edge_ring}, St);
+              false ->
+                  require_mode(edge, St),
+                  St
+          end,
+    hotkey_cut(St1).
+
+require_mode(Mode, #st{selmode=Mode}=St) -> St;
+require_mode(Mode, _St) ->
+    throw({agent_error, agent_fmt("command requires ~w selection mode", [Mode])}).
+
+apply_edge_command(Cmd, St) ->
+    apply_save_state(wings_edge_cmd:command(Cmd, St), Cmd).
+
+apply_vertex_command(Cmd, St) ->
+    apply_save_state(wings_vertex_cmd:command(Cmd, St), Cmd).
+
+apply_select_command(Cmd, St) ->
+    apply_save_state(wings_sel_cmd:command(Cmd, St), Cmd).
+
+apply_save_state({save_state, #st{}=S}, _Cmd) -> S;
+apply_save_state(#st{}=S, _Cmd) -> S;
+apply_save_state(Other, Cmd) ->
+    throw({agent_error, agent_fmt("command ~p failed: ~p", [Cmd, Other])}).
+
+parse_connect_variant(<<"edge">>) -> edge;
+parse_connect_variant(<<"edge_multiple">>) -> edge_multiple;
+parse_connect_variant(<<"vertex">>) -> vertex;
+parse_connect_variant(<<"vertex_cuts">>) -> vertex_cuts;
+parse_connect_variant(<<"vertex_connecting_edge">>) -> vertex_connecting_edge;
+parse_connect_variant(<<"connect_slide">>) -> connect_slide;
+parse_connect_variant(B) when is_binary(B) ->
+    parse_connect_variant(binary_to_existing_atom(B, utf8));
+parse_connect_variant(A) when is_atom(A) -> A.
 
 finish_drag({drag, Drag}, Move0) ->
     Units = wings_drag:drag_units(Drag),

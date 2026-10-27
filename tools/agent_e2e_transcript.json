@@ -21,7 +21,7 @@
       "ok": true,
       "op": "new",
       "selection": [],
-      "selection_mode": "face"
+      "selection_mode": "edge"
     }
   },
   {
@@ -55,7 +55,7 @@
       "ok": true,
       "op": "cube",
       "selection": [],
-      "selection_mode": "face"
+      "selection_mode": "edge"
     }
   },
   {
@@ -85,7 +85,7 @@
       "ok": true,
       "op": "state",
       "selection": [],
-      "selection_mode": "face"
+      "selection_mode": "edge"
     }
   },
   {
@@ -254,55 +254,188 @@
     }
   },
   {
-    "step": "loop cut",
+    "step": "mode edge (after bevel)",
     "request": {
-      "op": "loop_cut"
+      "op": "mode",
+      "mode": "edge"
     },
     "response": {
-      "num_objects": 2,
+      "num_objects": 1,
       "objects": [
         {
           "bbox": [
             -1.0,
             1.0,
             0.0,
-            2.419999999999831,
-            -1.0,
-            1.0
-          ],
-          "edges": 36,
-          "faces": 10,
-          "id": 1,
-          "name": "Cube1",
-          "vertices": 12
-        },
-        {
-          "bbox": [
-            -1.0,
-            1.0,
-            2.419999999999831,
             2.5,
             -1.0,
             1.0
           ],
-          "edges": 35,
-          "faces": 6,
-          "id": 2,
-          "name": "Cube1_cut2",
-          "vertices": 8
+          "edges": 36,
+          "faces": 14,
+          "id": 1,
+          "name": "Cube1",
+          "vertices": 16
         }
       ],
       "ok": true,
-      "op": "loop_cut",
+      "op": "mode",
       "selection": [
         {
           "ids": [
-            0
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            32,
+            34
           ],
-          "object": 2
+          "object": 1
         }
       ],
-      "selection_mode": "body"
+      "selection_mode": "edge"
+    }
+  },
+  {
+    "step": "edge ring cut (C hotkey)",
+    "request": {
+      "op": "edge_ring_cut"
+    },
+    "response": {
+      "num_objects": 1,
+      "objects": [
+        {
+          "bbox": [
+            -1.0,
+            1.0,
+            0.0,
+            2.5,
+            -1.0,
+            1.0
+          ],
+          "edges": 87,
+          "faces": 46,
+          "id": 1,
+          "name": "Cube1",
+          "vertices": 36
+        }
+      ],
+      "ok": true,
+      "op": "edge_ring_cut",
+      "selection": [
+        {
+          "ids": [
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            84,
+            85,
+            86
+          ],
+          "object": 1
+        }
+      ],
+      "selection_mode": "edge"
+    }
+  },
+  {
+    "step": "state one object",
+    "request": {
+      "op": "state"
+    },
+    "response": {
+      "num_objects": 1,
+      "objects": [
+        {
+          "bbox": [
+            -1.0,
+            1.0,
+            0.0,
+            2.5,
+            -1.0,
+            1.0
+          ],
+          "edges": 87,
+          "faces": 46,
+          "id": 1,
+          "name": "Cube1",
+          "vertices": 36
+        }
+      ],
+      "ok": true,
+      "op": "state",
+      "selection": [
+        {
+          "ids": [
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            84,
+            85,
+            86
+          ],
+          "object": 1
+        }
+      ],
+      "selection_mode": "edge"
     }
   },
   {
@@ -310,13 +443,13 @@
     "request": {
       "op": "export",
       "format": "obj",
-      "path": "/workspace/zings_agent_test/session.obj"
+      "path": "/tmp/wings_agent_test.obj"
     },
     "response": {
       "format": "obj",
       "ok": true,
       "op": "export",
-      "path": "/workspace/zings_agent_test/session.obj"
+      "path": "/tmp/wings_agent_test.obj"
     }
   },
   {
@@ -325,37 +458,22 @@
       "op": "state"
     },
     "response": {
-      "num_objects": 2,
+      "num_objects": 1,
       "objects": [
         {
           "bbox": [
             -1.0,
             1.0,
             0.0,
-            2.419999999999831,
-            -1.0,
-            1.0
-          ],
-          "edges": 36,
-          "faces": 10,
-          "id": 1,
-          "name": "Cube1",
-          "vertices": 12
-        },
-        {
-          "bbox": [
-            -1.0,
-            1.0,
-            2.419999999999831,
             2.5,
             -1.0,
             1.0
           ],
-          "edges": 35,
-          "faces": 6,
-          "id": 2,
-          "name": "Cube1_cut2",
-          "vertices": 8
+          "edges": 87,
+          "faces": 46,
+          "id": 1,
+          "name": "Cube1",
+          "vertices": 36
         }
       ],
       "ok": true,
@@ -363,12 +481,43 @@
       "selection": [
         {
           "ids": [
-            0
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            84,
+            85,
+            86
           ],
-          "object": 2
+          "object": 1
         }
       ],
-      "selection_mode": "body"
+      "selection_mode": "edge"
     }
   },
   {
@@ -385,7 +534,7 @@
       "ok": true,
       "op": "new",
       "selection": [],
-      "selection_mode": "body"
+      "selection_mode": "edge"
     }
   },
   {
@@ -419,7 +568,7 @@
       "ok": true,
       "op": "cube",
       "selection": [],
-      "selection_mode": "body"
+      "selection_mode": "edge"
     }
   },
   {
@@ -449,7 +598,7 @@
       "ok": true,
       "op": "state",
       "selection": [],
-      "selection_mode": "body"
+      "selection_mode": "edge"
     }
   },
   {
@@ -808,9 +957,10 @@
     }
   },
   {
-    "step": "house/state_final",
+    "step": "house/mode edge",
     "request": {
-      "op": "state"
+      "op": "mode",
+      "mode": "edge"
     },
     "response": {
       "num_objects": 1,
@@ -832,16 +982,231 @@
         }
       ],
       "ok": true,
-      "op": "state",
+      "op": "mode",
       "selection": [
         {
           "ids": [
-            2
+            20,
+            22,
+            24,
+            26
           ],
           "object": 1
         }
       ],
-      "selection_mode": "face"
+      "selection_mode": "edge"
+    }
+  },
+  {
+    "step": "house/select edge ring",
+    "request": {
+      "op": "select_edge_ring"
+    },
+    "response": {
+      "num_objects": 1,
+      "objects": [
+        {
+          "bbox": [
+            -2.0,
+            2.0,
+            0.0,
+            3.7,
+            -1.5,
+            1.5
+          ],
+          "edges": 28,
+          "faces": 14,
+          "id": 1,
+          "name": "Cube1",
+          "vertices": 16
+        }
+      ],
+      "ok": true,
+      "op": "select_edge_ring",
+      "selection": [
+        {
+          "ids": [
+            1,
+            2,
+            3,
+            4,
+            6,
+            7,
+            9,
+            10,
+            14,
+            18,
+            20,
+            22,
+            24,
+            26
+          ],
+          "object": 1
+        }
+      ],
+      "selection_mode": "edge"
+    }
+  },
+  {
+    "step": "house/cut (C connect)",
+    "request": {
+      "op": "cut"
+    },
+    "response": {
+      "num_objects": 1,
+      "objects": [
+        {
+          "bbox": [
+            -2.0,
+            2.0,
+            0.0,
+            3.7,
+            -1.5,
+            1.5
+          ],
+          "edges": 60,
+          "faces": 32,
+          "id": 1,
+          "name": "Cube1",
+          "vertices": 30
+        }
+      ],
+      "ok": true,
+      "op": "cut",
+      "selection": [
+        {
+          "ids": [
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59
+          ],
+          "object": 1
+        }
+      ],
+      "selection_mode": "edge"
+    }
+  },
+  {
+    "step": "house/state_after_cut",
+    "request": {
+      "op": "state"
+    },
+    "response": {
+      "num_objects": 1,
+      "objects": [
+        {
+          "bbox": [
+            -2.0,
+            2.0,
+            0.0,
+            3.7,
+            -1.5,
+            1.5
+          ],
+          "edges": 60,
+          "faces": 32,
+          "id": 1,
+          "name": "Cube1",
+          "vertices": 30
+        }
+      ],
+      "ok": true,
+      "op": "state",
+      "selection": [
+        {
+          "ids": [
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59
+          ],
+          "object": 1
+        }
+      ],
+      "selection_mode": "edge"
+    }
+  },
+  {
+    "step": "house/state_final",
+    "request": {
+      "op": "state"
+    },
+    "response": {
+      "num_objects": 1,
+      "objects": [
+        {
+          "bbox": [
+            -2.0,
+            2.0,
+            0.0,
+            3.7,
+            -1.5,
+            1.5
+          ],
+          "edges": 60,
+          "faces": 32,
+          "id": 1,
+          "name": "Cube1",
+          "vertices": 30
+        }
+      ],
+      "ok": true,
+      "op": "state",
+      "selection": [
+        {
+          "ids": [
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59
+          ],
+          "object": 1
+        }
+      ],
+      "selection_mode": "edge"
     }
   },
   {
@@ -849,13 +1214,13 @@
     "request": {
       "op": "export",
       "format": "obj",
-      "path": "/workspace/zings_agent_test/house.obj"
+      "path": "/tmp/wings_agent_house.obj"
     },
     "response": {
       "format": "obj",
       "ok": true,
       "op": "export",
-      "path": "/workspace/zings_agent_test/house.obj"
+      "path": "/tmp/wings_agent_house.obj"
     }
   },
   {
@@ -863,13 +1228,13 @@
     "request": {
       "op": "export",
       "format": "fbx",
-      "path": "/workspace/zings_agent_test/house.fbx"
+      "path": "/tmp/wings_agent_house.fbx"
     },
     "response": {
       "format": "fbx",
       "ok": true,
       "op": "export",
-      "path": "/workspace/zings_agent_test/house.fbx"
+      "path": "/tmp/wings_agent_house.fbx"
     }
   },
   {
@@ -889,11 +1254,11 @@
             -1.5,
             1.5
           ],
-          "edges": 28,
-          "faces": 14,
+          "edges": 60,
+          "faces": 32,
           "id": 1,
           "name": "Cube1",
-          "vertices": 16
+          "vertices": 30
         }
       ],
       "ok": true,
@@ -901,12 +1266,29 @@
       "selection": [
         {
           "ids": [
-            2
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59
           ],
           "object": 1
         }
       ],
-      "selection_mode": "face"
+      "selection_mode": "edge"
     }
   }
 ]
